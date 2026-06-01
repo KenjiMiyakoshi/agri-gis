@@ -1,20 +1,5 @@
-// API DTO の TypeScript 側ミラー。API 側 record と命名を一致させる（camelCase）。
-// 本ファイルは骨子のみ。0402 で全 DTO を網羅予定。
-
-export interface LayerDto {
-  layerId: number;
-  layerName: string;
-  layerType: string;
-  ownerOrgId: number | null;
-  isShared: boolean;
-  createdAt: string;             // ISO-8601
-  schemaVersion: number;
-  schema: LayerSchemaDto;
-}
-
-export interface LayerSchemaDto {
-  fields: SchemaFieldDto[];
-}
+// API DTO の TypeScript ミラー。API 側 record (camelCase) と命名完全一致。
+// 案 B' の方針：型ドリブンで WebGIS / WinForms が同じ仕様で API を消費する。
 
 export interface SchemaFieldDto {
   key: string;
@@ -23,7 +8,116 @@ export interface SchemaFieldDto {
   label?: string;
 }
 
-// GeoJSON Feature/Collection は OpenLayers の GeoJSON parser に渡すので
-// ここでは厳密に型付けせず、最小限の幅で保持する。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type FeatureCollectionDto = any;
+export interface LayerSchemaDto {
+  fields: SchemaFieldDto[];
+}
+
+export interface LayerDto {
+  layerId: number;
+  layerName: string;
+  layerType: string;
+  ownerOrgId: number | null;
+  isShared: boolean;
+  createdAt: string;             // ISO 8601
+  schemaVersion: number;
+  schema: LayerSchemaDto;
+}
+
+export interface LayerSchemaResponseDto {
+  layerId: number;
+  schemaVersion: number;
+  schema: LayerSchemaDto;
+}
+
+export interface FeaturePropertiesDto {
+  featureId: number;
+  layerId: number;
+  entityId: string;
+  version: number;
+  validFrom: string;             // YYYY-MM-DD
+  validTo: string;               // YYYY-MM-DD
+  attributesSchemaVersion: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;             // ISO 8601
+  updatedAt: string;             // ISO 8601
+  attributes: Record<string, unknown>;
+}
+
+export interface FeatureDto {
+  type: 'Feature';
+  geometry: unknown;             // GeoJSON geometry
+  properties: FeaturePropertiesDto;
+}
+
+export interface CrsDto {
+  type: string;                  // 'name'
+  properties: { name: string };  // 'EPSG:4326'
+}
+
+export interface FeatureCollectionDto {
+  type: 'FeatureCollection';
+  crs: CrsDto;
+  features: FeatureDto[];
+}
+
+export interface FeatureHistoryDto {
+  historyId: number;
+  featureId: number;
+  layerId: number;
+  entityId: string;
+  geometry: unknown;
+  attributes: Record<string, unknown>;
+  attributesSchemaVersion: number;
+  validFrom: string;
+  validTo: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+  archivedAt: string;
+  archivedBy: string;
+  archivedReason: string;        // 'update' | 'delete'
+}
+
+export interface CreateFeatureRequestDto {
+  layerId: number;
+  geometry: unknown;             // GeoJSON 4326
+  attributes: Record<string, unknown>;
+}
+
+export interface UpdateFeatureRequestDto {
+  geometry?: unknown | null;     // null/未指定で据え置き
+  attributes?: Record<string, unknown> | null;
+}
+
+export interface UpdateSchemaRequestDto {
+  schema: LayerSchemaDto;
+}
+
+export interface UpdateSchemaResponseDto {
+  layerId: number;
+  schemaVersion: number;
+}
+
+export interface AttributeErrorDto {
+  attributeKey: string;
+  code: string;
+  message: string;
+}
+
+// ASP.NET Core の ProblemDetails 形。errors は extensions 配下、
+// または top-level に乗ることがあるため両方を見るヘルパで吸収する。
+export interface ProblemDetailsDto {
+  type?: string;
+  title?: string;
+  status?: number;
+  detail?: string;
+  requestId?: string;
+  errors?: AttributeErrorDto[];
+  extensions?: {
+    requestId?: string;
+    errors?: AttributeErrorDto[];
+  };
+}
