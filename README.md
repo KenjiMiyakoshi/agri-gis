@@ -222,7 +222,7 @@ dotnet run
 ## 既知の制約
 
 - **refresh token なし**：Phase A は access 8h のみ。期限切れで再ログイン (`UnauthorizedApiException` → `LoginForm` の自動表示で UX 緩和)
-- **WebGIS は JWT 非保持**：CORS Origin 限定 (`localhost:5173`) のみで保護。トークン引き渡しは Phase B
+- **WebGIS は WinForms 経由の token push**：bridge `auth_token` envelope で JWT を引き渡す最小実装。WebGIS 単体の login UI / refresh token は未対応 (Phase B)
 - **テナント分離なし**：`org_id` は claim/audit に記録されるが SQL WHERE には未強制。Phase B でベース層に組み込み
 - **図形編集 UI なし**：API は `PATCH /api/features/{id}` で `geometry` を受け取れるが、WebGIS の Draw/Modify UI は未実装
 - **マイグレーションは手動適用**：Flyway 等のツールは未導入。`docker compose down -v` で再構築するのが現状の運用

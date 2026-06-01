@@ -56,6 +56,14 @@ public partial class MainForm : Form
             _bridge = new BridgeMessenger(webView.CoreWebView2);
             _bridge.MessageReceived += OnBridgeMessage;
 
+            // WebGIS は独立した HTTP クライアントなので、API 呼び出し前に JWT を渡す
+            // (Phase A の WebGIS 認証は本来 Phase B 対応。動作確認用の最小実装)
+            var session = _session.Current;
+            if (session is not null)
+            {
+                _bridge.Send("auth_token", new { accessToken = session.AccessToken });
+            }
+
             // レイヤ一覧を取得して ComboBox に流す
             SetStatus("Loading layers...");
             _layers = await _api.GetLayersAsync(CancellationToken.None);

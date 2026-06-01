@@ -93,7 +93,32 @@ WinForms 側は `ApiClient.EnsureSuccessAsync` で 401 を `UnauthorizedApiExcep
 
 ## CORS
 
-`WebGIS` (Vite, localhost:5173) のみ許可: `WithOrigins("http://localhost:5173","http://127.0.0.1:5173")`。Phase A では WebGIS が JWT を所持せず、ブラウザは GET のみで状態変更しない構成。
+`WebGIS` (Vite, localhost:5173) のみ許可: `WithOrigins("http://localhost:5173","http://127.0.0.1:5173")`。
+
+## WebGIS への JWT 引き渡し
+
+WebGIS は独立した HTTP クライアントとして `/api/*` を直接呼び出すため、JWT が必要。Phase A では **WinForms → WebGIS を WebView2 bridge 経由で渡す最小実装**を採用：
+
+1. WinForms `MainForm` は WebGIS の navigation 完了 + bridge 確立直後に `Session.AccessToken` を `auth_token` envelope で送信
+2. WebGIS `main.ts` が `auth_token` を受領 → `setAccessToken(token)` で module-level 変数に保持
+3. `webgis/src/api/client.ts` の `authFetch` ラッパが全 fetch に `Authorization: Bearer <token>` を自動付与
+
+```
+WinForms                                WebGIS
+  ├ LoginForm → ISessionStore.Set(...)
+  ├ MainForm.OnLoad
+  │   ├ webView.EnsureCoreWebView2Async
+  │   ├ NavigationCompleted 待機
+  │   ├ BridgeMessenger 生成
+  │   └ Send("auth_token", {accessToken})  ──► onMessage('auth_token')
+  │                                              └ setAccessToken(token)
+  └ Send("layer_select", {layerId})        ──► onMessage('layer_select')
+                                                  └ authFetch GET /api/features ✓
+```
+
+token 失効時 (401) の再ログインは WinForms 側で `LoginForm` を再表示し、新しい access token を再度 bridge で push する必要がある（現在は MainForm 再起動相当の HandleUnauthorizedAsync で対応）。
+
+Phase B では refresh token rotation と WebGIS 自身の login UI も検討。
 
 ## テスト用トークン発行
 
@@ -116,4 +141,4 @@ var token = TokenForge.Issue(
 - **複数ロール兼務**：DB は多対多なので値追加だけで足りる。policy 側に `RequireRole("admin","general")` を追加するだけ。
 - **テナント分離**：全 SQL `WHERE org_id = @currentOrg` を強制するベースクラスを導入予定。
 - **`audit_log.actor` (TEXT) 列の rename**：Phase A は display_name snapshot として温存。Phase B で `display_name_snapshot` などへ rename。
-- **WebGIS の JWT 引き渡し**：Phase A は CORS Origin 限定のみ。Phase B でブリッジ経由のトークン引き渡しを検討。
+- **WebGIS への refresh token / WebGIS 自身の login UI**：Phase A は WinForms 経由の最小 token push（上記「WebGIS への JWT 引き渡し」節）のみ。expires_at 時刻管理や WebGIS 単体ログインは未対応。
