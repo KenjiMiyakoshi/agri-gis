@@ -26,6 +26,15 @@ public sealed class ApiClient : IApiClient
         _http = http;
     }
 
+    public async Task<LoginResponseDto> LoginAsync(string loginId, string password, CancellationToken ct)
+    {
+        var req = new LoginRequestDto(loginId, password);
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync("/api/auth/login", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LoginResponseDto>(JsonOpts, ct))!;
+    }
+
     public async Task<IReadOnlyList<LayerDto>> GetLayersAsync(CancellationToken ct)
     {
         using var res = await _http.GetAsync("/api/layers", ct);
@@ -66,11 +75,10 @@ public sealed class ApiClient : IApiClient
     }
 
     public async Task<CreateFeatureResultDto> CreateFeatureAsync(
-        CreateFeatureRequestDto req, string actor, CancellationToken ct)
+        CreateFeatureRequestDto req, CancellationToken ct)
     {
         using var content = JsonContent.Create(req, options: JsonOpts);
         using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/features") { Content = content };
-        SetActor(msg, actor);
 
         using var res = await _http.SendAsync(msg, ct);
         await EnsureSuccessAsync(res, ct);
@@ -78,11 +86,10 @@ public sealed class ApiClient : IApiClient
     }
 
     public async Task<PatchFeatureResultDto> UpdateFeatureAsync(
-        Guid entityId, UpdateFeatureRequestDto req, int ifMatchVersion, string actor, CancellationToken ct)
+        Guid entityId, UpdateFeatureRequestDto req, int ifMatchVersion, CancellationToken ct)
     {
         using var content = JsonContent.Create(req, options: JsonOpts);
         using var msg = new HttpRequestMessage(HttpMethod.Patch, $"/api/features/{entityId}") { Content = content };
-        SetActor(msg, actor);
         // サーバ側は素の数値 (例: "1") を int.TryParse で読む実装 (FeatureEndpoints.cs)。
         // ETag 形式 ("\"1\"") を二重送出すると HTTP 結合値 "1, \"1\"" になり 428 を引く。
         msg.Headers.TryAddWithoutValidation("If-Match", ifMatchVersion.ToString());
@@ -92,17 +99,11 @@ public sealed class ApiClient : IApiClient
         return (await res.Content.ReadFromJsonAsync<PatchFeatureResultDto>(JsonOpts, ct))!;
     }
 
-    public async Task DeleteFeatureAsync(Guid entityId, string actor, CancellationToken ct)
+    public async Task DeleteFeatureAsync(Guid entityId, CancellationToken ct)
     {
         using var msg = new HttpRequestMessage(HttpMethod.Delete, $"/api/features/{entityId}");
-        SetActor(msg, actor);
         using var res = await _http.SendAsync(msg, ct);
         await EnsureSuccessAsync(res, ct);
-    }
-
-    private static void SetActor(HttpRequestMessage msg, string actor)
-    {
-        msg.Headers.TryAddWithoutValidation("X-Actor", actor);
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage res, CancellationToken ct)

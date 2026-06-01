@@ -21,11 +21,14 @@ internal static class Program
         // A401: セッション保持 (in-memory)。A402 (LoginForm) でログイン成功時に Set される
         services.AddSingleton<ISessionStore, InMemorySessionStore>();
 
+        // A403: 全 HTTP リクエストに Authorization: Bearer <token> を付与する DelegatingHandler
+        services.AddTransient<BearerHandler>();
+
         services.AddHttpClient<IApiClient, ApiClient>(c =>
         {
             c.BaseAddress = new Uri(ApiBaseUrl);
             c.Timeout = TimeSpan.FromSeconds(30);
-        });
+        }).AddHttpMessageHandler<BearerHandler>();
 
         // BridgeMessenger は CoreWebView2 のライフサイクルが Form 依存のため
         // DI 登録せず、MainForm が WebView2 初期化完了後に new する。

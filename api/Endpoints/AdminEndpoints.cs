@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgriGis.Api.Auth;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
 using Npgsql;
@@ -20,9 +21,9 @@ public static class AdminEndpoints
         // schema_json を差し替えて fn_layer_schema_upsert を呼ぶ。
         // X-Actor 必須、軽量バリデーションで key/type 空欄を 422。
         group.MapPut("/layers/{layerId:int}/schema",
-            async (int layerId, UpdateSchemaRequestDto req, HttpContext ctx, NpgsqlDataSource db) =>
+            async (int layerId, UpdateSchemaRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
         {
-            var actor = RequestContext.RequireActor(ctx);
+            var actor = user.DisplayName;
             var requestId = RequestContext.GetRequestId(ctx);
 
             var errors = new List<AttributeErrorDto>();
@@ -54,11 +55,13 @@ public static class AdminEndpoints
             var schemaJson = JsonSerializer.Serialize(req.Schema, SerializerOptions);
 
             await using var cmd = db.CreateCommand(
-                "SELECT fn_layer_schema_upsert(@id, @s::jsonb, @a, @rid)");
+                "SELECT fn_layer_schema_upsert(@id, @s::jsonb, @a, @rid, @uid, @oid)");
             cmd.Parameters.AddWithValue("id", layerId);
             cmd.Parameters.AddWithValue("s", schemaJson);
             cmd.Parameters.AddWithValue("a", actor);
             cmd.Parameters.AddWithValue("rid", requestId);
+            cmd.Parameters.AddWithValue("uid", user.UserId);
+            cmd.Parameters.AddWithValue("oid", user.OrgId);
 
             var newVersion = (int)(await cmd.ExecuteScalarAsync())!;
             return Results.Ok(new UpdateSchemaResponseDto(layerId, newVersion));

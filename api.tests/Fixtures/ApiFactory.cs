@@ -16,14 +16,18 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
     // テスト全体で共有する JWT 署名鍵 (HS256, 32+ bytes)。A502 の TokenForge と共有。
     public const string TestJwtSecret = "agri-gis-test-jwt-secret-32bytes!!__min__";
+    public const string TestJwtIssuer = "agri-gis-api";
+    public const string TestJwtAudience = "agri-gis-windows";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // api/Program.cs は環境変数 AGRI_GIS_DB を最優先するため、ここで差し込む
         Environment.SetEnvironmentVariable("AGRI_GIS_DB", _connectionString);
         // WA2 A201: JwtService が起動時に AGRI_GIS_JWT_SECRET を要求するため固定値を渡す。
-        // 認証 middleware は WA3 (A204/A206) で配線されるまで未使用なので影響なし。
         Environment.SetEnvironmentVariable("AGRI_GIS_JWT_SECRET", TestJwtSecret);
+        // WA3 A207: InitialAdminBootstrap をテストではスキップ。seed は fixture 側で行う。
+        Environment.SetEnvironmentVariable("AGRI_GIS_SKIP_BOOTSTRAP", "1");
+        builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:AgriGis", _connectionString);
     }
 }
