@@ -9,10 +9,20 @@ public partial class AttributeEditorControl : UserControl
 {
     // 保存成功時に layerId を渡して親フォームに通知 (features_reload 用)
     public event EventHandler<int>? Saved;
+    // A404: feature が読み込まれた直後に発火。MainForm が guest UI 制限を再適用するため。
+    public event EventHandler? FeatureLoaded;
 
     private LayerSchema? _schema;
     private FeatureDto? _feature;
     private readonly Dictionary<string, Control> _fieldControls = new();
+    private bool _readOnly;
+
+    // A404: guest 等の閲覧専用ユーザは保存ボタンを無効化する
+    public void SetReadOnly(bool readOnly)
+    {
+        _readOnly = readOnly;
+        if (_feature is not null) saveButton.Enabled = !readOnly;
+    }
 
     public AttributeEditorControl()
     {
@@ -28,7 +38,8 @@ public partial class AttributeEditorControl : UserControl
 
         headerLabel.Text = $"Entity {feature.Properties.EntityId} (v{feature.Properties.Version})";
         BuildFields(schema, feature);
-        saveButton.Enabled = true;
+        saveButton.Enabled = !_readOnly;
+        FeatureLoaded?.Invoke(this, EventArgs.Empty);
     }
 
     private const int LabelWidth = 110;
