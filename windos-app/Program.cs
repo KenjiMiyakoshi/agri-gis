@@ -23,11 +23,13 @@ internal static class Program
             c.Timeout = TimeSpan.FromSeconds(30);
         });
 
-        // BridgeMessenger は CoreWebView2 を受け取って Forms 側で new するため
-        // ここでは DI 登録しない (#36 0504 で MainForm が直接 new する想定)。
+        // BridgeMessenger は CoreWebView2 のライフサイクルが Form 依存のため
+        // DI 登録せず、MainForm が WebView2 初期化完了後に new する。
+
+        services.AddTransient<MainForm>();
 
         using var sp = services.BuildServiceProvider();
 
-        Application.Run(new MainForm());
+        Application.Run(sp.GetRequiredService<MainForm>());
     }
 }
