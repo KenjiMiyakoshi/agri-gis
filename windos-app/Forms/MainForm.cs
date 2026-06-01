@@ -1,7 +1,9 @@
 using System.Text.Json;
+using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Core;
 using AgriGis.Desktop.Dto;
 using AgriGis.Desktop.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
 
 namespace AgriGis.Desktop.Forms;
@@ -11,15 +13,20 @@ public partial class MainForm : Form
     private const string WebGisUrl = "http://localhost:5173";
 
     private readonly IApiClient _api;
+    private readonly ISessionStore _session;
+    private readonly IServiceProvider _sp;
     private BridgeMessenger? _bridge;
     private IReadOnlyList<LayerDto> _layers = Array.Empty<LayerDto>();
 
-    public MainForm(IApiClient api)
+    public MainForm(IApiClient api, ISessionStore session, IServiceProvider sp)
     {
         _api = api;
+        _session = session;
+        _sp = sp;
         InitializeComponent();
         layerCombo.SelectedIndexChanged += OnLayerComboChanged;
         attributeEditor.Saved += OnAttributeEditorSaved;
+        attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
     }
 
     protected override async void OnLoad(EventArgs e)
@@ -63,6 +70,11 @@ public partial class MainForm : Form
             }
 
             SetStatus("Ready");
+            ApplyGuestRestriction();
+        }
+        catch (UnauthorizedApiException)
+        {
+            await HandleUnauthorizedAsync();
         }
         catch (Exception ex)
         {
@@ -72,6 +84,43 @@ public partial class MainForm : Form
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             Close();
+        }
+    }
+
+    private void ApplyGuestRestriction()
+    {
+        var isGuest = _session.Current?.IsGuest ?? false;
+        attributeEditor.SetReadOnly(isGuest);
+    }
+
+    private async Task HandleUnauthorizedAsync()
+    {
+        _session.Clear();
+        Hide();
+        using var login = _sp.GetRequiredService<LoginForm>();
+        var ok = login.ShowDialog() == DialogResult.OK;
+        if (!ok)
+        {
+            Close();
+            return;
+        }
+        Show();
+        // 認証復旧後にレイヤを再取得
+        try
+        {
+            _layers = await _api.GetLayersAsync(CancellationToken.None);
+            layerCombo.Items.Clear();
+            foreach (var l in _layers)
+            {
+                layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
+            }
+            if (_layers.Count > 0) layerCombo.SelectedIndex = 0;
+            ApplyGuestRestriction();
+            SetStatus("Re-authenticated");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"reload after login failed: {ex.Message}");
         }
     }
 
@@ -124,6 +173,10 @@ public partial class MainForm : Form
                 attributeEditor.LoadFeature(coreSchema, feature);
             }
             SetStatus($"Feature {entityId} loaded");
+        }
+        catch (UnauthorizedApiException)
+        {
+            await HandleUnauthorizedAsync();
         }
         catch (Exception ex)
         {

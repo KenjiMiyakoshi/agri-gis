@@ -89,8 +89,10 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok" })).AllowAnonymou
 app.MapGroup("/api/auth").MapAuthEndpoints();
 app.MapGroup("/api/layers").MapLayerEndpoints().RequireAuthorization();
 app.MapGroup("/api/features").MapFeatureEndpoints().RequireAuthorization();
-app.MapGroup("/api/admin").MapAdminEndpoints()
-    .RequireAuthorization(p => p.RequireRole("admin"));
+var adminGroup = app.MapGroup("/api/admin").RequireAuthorization(p => p.RequireRole("admin"));
+adminGroup.MapAdminEndpoints();
+adminGroup.MapGroup("/organizations").MapAdminOrgsEndpoints();
+adminGroup.MapGroup("/users").MapAdminUsersEndpoints();
 
 app.Run();
 

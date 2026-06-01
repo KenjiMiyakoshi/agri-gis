@@ -112,6 +112,13 @@ public sealed class ApiClient : IApiClient
 
         var body = await res.Content.ReadAsStringAsync(ct);
         var problem = ProblemDetailsParser.Parse(body);
+
+        // A404: 401 はトークン失効と見做して MainForm の再ログインフローへ
+        if ((int)res.StatusCode == 401)
+        {
+            throw new UnauthorizedApiException(problem);
+        }
+
         var title = problem.Title ?? res.ReasonPhrase ?? $"HTTP {(int)res.StatusCode}";
         throw new ApiException($"{(int)res.StatusCode} {title}", problem);
     }
