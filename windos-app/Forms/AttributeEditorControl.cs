@@ -143,8 +143,11 @@ public partial class AttributeEditorControl : UserControl
 
             var entityId = Guid.Parse(_feature.Properties.EntityId);
             var req = new UpdateFeatureRequestDto(null, attrs);
+            // TODO: A403 で ISessionStore.Current.LoginId を渡すよう変更。
+            // A401 (ActorContext 削除) の最低限のコンパイル維持として暫定 Environment.UserName。
+            var actor = Environment.UserName;
             var result = await main.Api.UpdateFeatureAsync(
-                entityId, req, _feature.Properties.Version, ActorContext.Current, CancellationToken.None);
+                entityId, req, _feature.Properties.Version, actor, CancellationToken.None);
 
             errorLabel.Text = $"Saved. New version: {result.Version}";
             // 親に features_reload 要求
