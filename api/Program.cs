@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgriGis.Api.Endpoints;
 using Npgsql;
 
@@ -9,6 +11,14 @@ var connectionString =
     ?? "Host=localhost;Port=5432;Database=agri_gis;Username=agri_user;Password=agri_pass";
 
 builder.Services.AddSingleton(new NpgsqlDataSourceBuilder(connectionString).Build());
+
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    // DictionaryKeyPolicy はあえて設定しない：attributes のキーはユーザー定義なので、サーバ側で勝手にケース変換しない
+    o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 
 const string CorsPolicy = "webgis";
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
