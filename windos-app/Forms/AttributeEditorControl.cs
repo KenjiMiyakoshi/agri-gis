@@ -31,26 +31,41 @@ public partial class AttributeEditorControl : UserControl
         saveButton.Enabled = true;
     }
 
+    private const int LabelWidth = 110;
+    private const int RowHeight = 28;
+    private const int RowMargin = 4;
+
     private void BuildFields(LayerSchema schema, FeatureDto feature)
     {
         fieldsLayout.SuspendLayout();
         fieldsLayout.Controls.Clear();
         _fieldControls.Clear();
-        fieldsLayout.RowStyles.Clear();
-        fieldsLayout.RowCount = 0;
+
+        // 行幅は fieldsLayout のクライアント幅から VScroll 分を引いた値を使う
+        int rowWidth = Math.Max(200, fieldsLayout.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
 
         var descriptors = SchemaFormBuilder.Build(schema);
         foreach (var d in descriptors)
         {
+            var rowPanel = new Panel
+            {
+                Width = rowWidth,
+                Height = RowHeight,
+                Margin = new Padding(0, 0, 0, RowMargin)
+            };
+
             var label = new Label
             {
                 Text = d.Required ? $"{d.Label} *" : d.Label,
+                Location = new System.Drawing.Point(0, 0),
+                Size = new System.Drawing.Size(LabelWidth, RowHeight),
                 AutoSize = false,
-                Dock = DockStyle.Fill,
                 TextAlign = System.Drawing.ContentAlignment.MiddleLeft
             };
+
             Control input = CreateControlForKind(d.Kind);
-            input.Dock = DockStyle.Fill;
+            input.Location = new System.Drawing.Point(LabelWidth + 4, (RowHeight - GetNaturalHeight(input)) / 2);
+            input.Width = rowWidth - LabelWidth - 8;
             input.Tag = d.Key;
             _fieldControls[d.Key] = input;
 
@@ -60,13 +75,19 @@ public partial class AttributeEditorControl : UserControl
                 ApplyValue(input, d.Kind, existing);
             }
 
-            fieldsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            fieldsLayout.Controls.Add(label, 0, fieldsLayout.RowCount);
-            fieldsLayout.Controls.Add(input, 1, fieldsLayout.RowCount);
-            fieldsLayout.RowCount++;
+            rowPanel.Controls.Add(label);
+            rowPanel.Controls.Add(input);
+            fieldsLayout.Controls.Add(rowPanel);
         }
         fieldsLayout.ResumeLayout();
     }
+
+    // single-line 系コントロールの自然高さを返す。垂直中央配置の Y 計算に使う。
+    private static int GetNaturalHeight(Control control) => control switch
+    {
+        CheckBox => 18,
+        _        => control.Height > 0 ? control.Height : 23
+    };
 
     private static Control CreateControlForKind(FieldKind kind) => kind switch
     {

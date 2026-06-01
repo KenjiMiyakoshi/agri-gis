@@ -5,7 +5,7 @@ namespace AgriGis.Desktop.Forms;
 partial class AttributeEditorControl
 {
     private System.ComponentModel.IContainer? components = null;
-    private TableLayoutPanel fieldsLayout = null!;
+    private FlowLayoutPanel fieldsLayout = null!;
     private FlowLayoutPanel buttonsPanel = null!;
     private Button saveButton = null!;
     private Label headerLabel = null!;
@@ -22,7 +22,7 @@ partial class AttributeEditorControl
 
     private void InitializeComponent()
     {
-        fieldsLayout = new TableLayoutPanel();
+        fieldsLayout = new FlowLayoutPanel();
         buttonsPanel = new FlowLayoutPanel();
         saveButton = new Button();
         headerLabel = new Label();
@@ -37,12 +37,12 @@ partial class AttributeEditorControl
         headerLabel.AutoSize = false;
         headerLabel.Padding = new Padding(0, 4, 0, 4);
 
-        // fieldsLayout
+        // fieldsLayout (縦並びの FlowLayoutPanel。各行は属性ごとの Panel)
         fieldsLayout.Dock = DockStyle.Fill;
-        fieldsLayout.ColumnCount = 2;
-        fieldsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35F));
-        fieldsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65F));
+        fieldsLayout.FlowDirection = FlowDirection.TopDown;
+        fieldsLayout.WrapContents = false;
         fieldsLayout.AutoScroll = true;
+        fieldsLayout.Padding = new Padding(0);
 
         // errorLabel
         errorLabel.Dock = DockStyle.Bottom;
