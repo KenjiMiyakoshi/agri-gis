@@ -27,8 +27,11 @@ builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
      .AllowAnyHeader()
      .AllowAnyMethod()));
 
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
 app.UseMiddleware<RequestContextMiddleware>();
+app.UseMiddleware<ProblemDetailsMiddleware>();
 app.UseCors(CorsPolicy);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
