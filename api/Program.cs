@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgriGis.Api.Endpoints;
+using AgriGis.Api.Middleware;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -27,6 +28,7 @@ builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
      .AllowAnyMethod()));
 
 var app = builder.Build();
+app.UseMiddleware<RequestContextMiddleware>();
 app.UseCors(CorsPolicy);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
