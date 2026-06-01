@@ -1,4 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgriGis.Api.Endpoints;
+using AgriGis.Api.Middleware;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,13 +13,25 @@ var connectionString =
 
 builder.Services.AddSingleton(new NpgsqlDataSourceBuilder(connectionString).Build());
 
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    // DictionaryKeyPolicy はあえて設定しない：attributes のキーはユーザー定義なので、サーバ側で勝手にケース変換しない
+    o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
+
 const string CorsPolicy = "webgis";
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
     p.WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
      .AllowAnyHeader()
      .AllowAnyMethod()));
 
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
+app.UseMiddleware<RequestContextMiddleware>();
+app.UseMiddleware<ProblemDetailsMiddleware>();
 app.UseCors(CorsPolicy);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
