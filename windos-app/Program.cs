@@ -1,3 +1,4 @@
+using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Forms;
 using AgriGis.Desktop.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +17,9 @@ internal static class Program
         ApplicationConfiguration.Initialize();
 
         var services = new ServiceCollection();
+
+        // A401: セッション保持 (in-memory)。A402 (LoginForm) でログイン成功時に Set される
+        services.AddSingleton<ISessionStore, InMemorySessionStore>();
 
         services.AddHttpClient<IApiClient, ApiClient>(c =>
         {
