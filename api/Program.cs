@@ -1,7 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgriGis.Api.Auth;
 using AgriGis.Api.Endpoints;
 using AgriGis.Api.Middleware;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,6 +31,30 @@ builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
      .AllowAnyMethod()));
 
 builder.Services.AddProblemDetails();
+
+// JWT 基盤 (WA2/A201)。middleware 配線 (UseAuthentication/UseAuthorization) は WA3 (A204) で行う。
+builder.Services.AddSingleton<JwtService>();
+builder.Services.AddSingleton<PasswordHasher>();
+
+var jwtBootstrap = new JwtService(builder.Configuration); // fail-fast: 起動時に secret 検証
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o =>
+    {
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwtBootstrap.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwtBootstrap.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(jwtBootstrap.SecretBytes),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            NameClaimType = "login_id",
+            RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+        };
+    });
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 app.UseMiddleware<RequestContextMiddleware>();
