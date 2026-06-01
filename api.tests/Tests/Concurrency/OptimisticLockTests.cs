@@ -20,7 +20,7 @@ public sealed class OptimisticLockTests : IAsyncLifetime
     public async Task Patch_WithoutIfMatch_Returns428()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
         var entityId = await CreateAsync(client);
 
         var req = new HttpRequestMessage(HttpMethod.Patch, $"/api/features/{entityId}")
@@ -35,7 +35,7 @@ public sealed class OptimisticLockTests : IAsyncLifetime
     public async Task Patch_WithWrongIfMatch_Returns409_WithRequestId()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").WithRequestId("rid-test-1").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").WithRequestId("rid-test-1").Build();
         var entityId = await CreateAsync(client);
 
         var req = new HttpRequestMessage(HttpMethod.Patch, $"/api/features/{entityId}")

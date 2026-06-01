@@ -3,15 +3,20 @@ using Npgsql;
 namespace AgriGis.Api.Tests.Fixtures;
 
 // テストごとに走らせて行数を予測可能な状態にする。
-// feature_current/history/audit/layer_schema_version/layers を初期化し、
-// 2 レイヤの基本シードを入れる。
+// feature_current/history/audit/layer_schema_version/layers/user_roles/users/organizations
+// を初期化し、2 レイヤの基本シードと 3 ユーザ (alice/bob/carol) を入れる。
 public static class DbReset
 {
-    private const string TruncateSql =
-        "TRUNCATE feature_current, feature_history, audit_log, layer_schema_version " +
-        "RESTART IDENTITY CASCADE; " +
-        "DELETE FROM layers; " +
-        "ALTER SEQUENCE layers_layer_id_seq RESTART WITH 1;";
+    private const string TruncateSql = @"
+        TRUNCATE audit_log RESTART IDENTITY CASCADE;
+        TRUNCATE feature_current, feature_history, layer_schema_version
+                 RESTART IDENTITY CASCADE;
+        DELETE FROM layers;
+        ALTER SEQUENCE layers_layer_id_seq RESTART WITH 1;
+        DELETE FROM user_roles;
+        DELETE FROM users;
+        DELETE FROM organizations;
+        ALTER SEQUENCE organizations_id_seq RESTART WITH 1;";
 
     private const string LayersSeedSql = @"
         INSERT INTO layers (layer_name, layer_type, schema_json, schema_version) VALUES
@@ -35,5 +40,7 @@ public static class DbReset
         {
             await c.ExecuteNonQueryAsync();
         }
+
+        await SeedUsers.SeedAsync(connectionString);
     }
 }

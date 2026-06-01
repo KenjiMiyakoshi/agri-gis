@@ -20,7 +20,7 @@ public sealed class SchemaViolationTests : IAsyncLifetime
     public async Task Post_WithoutRequired_Returns422_WithRequiredError()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
         var body = new
         {
@@ -42,7 +42,7 @@ public sealed class SchemaViolationTests : IAsyncLifetime
     public async Task Post_WithWrongType_Returns422_WithTypeMismatchError()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
         // schema: name=string required。数値を渡して type_mismatch を期待
         var body = new

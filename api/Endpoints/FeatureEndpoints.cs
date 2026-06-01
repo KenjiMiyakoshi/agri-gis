@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgriGis.Api.Auth;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
 using AgriGis.Api.Validation;
@@ -138,9 +139,9 @@ public static class FeatureEndpoints
         });
 
         // 0210: POST /api/features
-        group.MapPost("/", async (CreateFeatureRequestDto req, HttpContext ctx, NpgsqlDataSource db) =>
+        group.MapPost("/", async (CreateFeatureRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
         {
-            var actor = RequestContext.RequireActor(ctx);
+            var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
 
             // 該当レイヤの現行 schema を取得
@@ -169,13 +170,15 @@ public static class FeatureEndpoints
 
             var entityId = Guid.NewGuid();
             await using var cmd = db.CreateCommand(
-                "SELECT fn_feature_insert(@l, @e, @g, @a::jsonb, @act, @rid)");
+                "SELECT fn_feature_insert(@l, @e, @g, @a::jsonb, @act, @rid, @uid, @oid)");
             cmd.Parameters.AddWithValue("l", req.LayerId);
             cmd.Parameters.AddWithValue("e", entityId);
             cmd.Parameters.AddWithValue("g", req.Geometry.GetRawText());
             cmd.Parameters.AddWithValue("a", JsonSerializer.Serialize(attrs, SerializerOptions));
             cmd.Parameters.AddWithValue("act", actor);
             cmd.Parameters.AddWithValue("rid", rid);
+            cmd.Parameters.AddWithValue("uid", user.UserId);
+            cmd.Parameters.AddWithValue("oid", user.OrgId);
 
             var featureId = (long)(await cmd.ExecuteScalarAsync())!;
 
@@ -187,13 +190,13 @@ public static class FeatureEndpoints
                     version = 1,
                     attributesSchemaVersion = schemaVersion
                 });
-        });
+        }).RequireAuthorization("WriteFeature");
 
         // 0211: PATCH /api/features/{entityId} (If-Match 必須、楽観ロック)
         group.MapPatch("/{entityId:guid}",
-            async (Guid entityId, UpdateFeatureRequestDto req, HttpContext ctx, NpgsqlDataSource db) =>
+            async (Guid entityId, UpdateFeatureRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
         {
-            var actor = RequestContext.RequireActor(ctx);
+            var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
 
             var ifMatch = ctx.Request.Headers["If-Match"].ToString();
@@ -230,7 +233,7 @@ public static class FeatureEndpoints
             }
 
             await using var cmd = db.CreateCommand(
-                @"SELECT fn_feature_update(@e, @g, @a::jsonb, @act, @ev, @rid)");
+                @"SELECT fn_feature_update(@e, @g, @a::jsonb, @act, @ev, @rid, @uid, @oid)");
             cmd.Parameters.AddWithValue("e", entityId);
             cmd.Parameters.AddWithValue("g",
                 req.Geometry?.GetRawText() ?? (object)DBNull.Value);
@@ -241,27 +244,31 @@ public static class FeatureEndpoints
             cmd.Parameters.AddWithValue("act", actor);
             cmd.Parameters.AddWithValue("ev", expected);
             cmd.Parameters.AddWithValue("rid", rid);
+            cmd.Parameters.AddWithValue("uid", user.UserId);
+            cmd.Parameters.AddWithValue("oid", user.OrgId);
 
             var newVersion = (int)(await cmd.ExecuteScalarAsync())!;
             return Results.Ok(new { entityId, version = newVersion });
-        });
+        }).RequireAuthorization("WriteFeature");
 
         // 0212: DELETE /api/features/{entityId} (履歴退避 + current から削除)
         group.MapDelete("/{entityId:guid}",
-            async (Guid entityId, HttpContext ctx, NpgsqlDataSource db) =>
+            async (Guid entityId, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
         {
-            var actor = RequestContext.RequireActor(ctx);
+            var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
 
             await using var cmd = db.CreateCommand(
-                "SELECT fn_feature_delete(@e, @a, @r)");
+                "SELECT fn_feature_delete(@e, @a, @r, @uid, @oid)");
             cmd.Parameters.AddWithValue("e", entityId);
             cmd.Parameters.AddWithValue("a", actor);
             cmd.Parameters.AddWithValue("r", rid);
+            cmd.Parameters.AddWithValue("uid", user.UserId);
+            cmd.Parameters.AddWithValue("oid", user.OrgId);
 
             await cmd.ExecuteScalarAsync();
             return Results.NoContent();
-        });
+        }).RequireAuthorization("WriteFeature");
 
         return group;
     }

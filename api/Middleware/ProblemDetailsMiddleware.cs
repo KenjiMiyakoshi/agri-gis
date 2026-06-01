@@ -61,7 +61,6 @@ public sealed class ProblemDetailsMiddleware
 
     private static (int Status, string Title, IReadOnlyList<AttributeErrorDto>? Errors) Map(Exception ex) => ex switch
     {
-        MissingActorException        => (400, "X-Actor header is required", null),
         ValidationException v        => (422, "Validation failed", v.Errors),
         NotFoundException n          => (404, n.Message, null),
         VersionConflictException     => (409, "Version conflict", null),

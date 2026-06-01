@@ -27,7 +27,7 @@ public sealed class InsertInvariantTests : IAsyncLifetime
     public async Task Insert_AddsCurrent_AndAuditOnly()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
         var body = new
         {
@@ -52,7 +52,8 @@ public sealed class InsertInvariantTests : IAsyncLifetime
         await using var r = await cmd.ExecuteReaderAsync();
         Assert.True(await r.ReadAsync());
         Assert.Equal("feature_insert", r.GetString(0));
-        Assert.Equal("alice", r.GetString(1));
+        // WA3 以降 actor は display_name snapshot (旧 X-Actor の login_id 直書きでは無い)
+        Assert.Equal("Alice Admin", r.GetString(1));
         Assert.True(r.IsDBNull(2));            // before_doc は NULL
         Assert.False(r.IsDBNull(3));           // after_doc は NOT NULL
     }

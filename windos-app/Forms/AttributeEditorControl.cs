@@ -9,10 +9,20 @@ public partial class AttributeEditorControl : UserControl
 {
     // 保存成功時に layerId を渡して親フォームに通知 (features_reload 用)
     public event EventHandler<int>? Saved;
+    // A404: feature が読み込まれた直後に発火。MainForm が guest UI 制限を再適用するため。
+    public event EventHandler? FeatureLoaded;
 
     private LayerSchema? _schema;
     private FeatureDto? _feature;
     private readonly Dictionary<string, Control> _fieldControls = new();
+    private bool _readOnly;
+
+    // A404: guest 等の閲覧専用ユーザは保存ボタンを無効化する
+    public void SetReadOnly(bool readOnly)
+    {
+        _readOnly = readOnly;
+        if (_feature is not null) saveButton.Enabled = !readOnly;
+    }
 
     public AttributeEditorControl()
     {
@@ -28,7 +38,8 @@ public partial class AttributeEditorControl : UserControl
 
         headerLabel.Text = $"Entity {feature.Properties.EntityId} (v{feature.Properties.Version})";
         BuildFields(schema, feature);
-        saveButton.Enabled = true;
+        saveButton.Enabled = !_readOnly;
+        FeatureLoaded?.Invoke(this, EventArgs.Empty);
     }
 
     private const int LabelWidth = 110;
@@ -143,8 +154,10 @@ public partial class AttributeEditorControl : UserControl
 
             var entityId = Guid.Parse(_feature.Properties.EntityId);
             var req = new UpdateFeatureRequestDto(null, attrs);
+            // A403: actor は JWT の claims から API 側が決める。BearerHandler が
+            // Authorization ヘッダを自動付与するため、ここで actor を渡す必要はない。
             var result = await main.Api.UpdateFeatureAsync(
-                entityId, req, _feature.Properties.Version, ActorContext.Current, CancellationToken.None);
+                entityId, req, _feature.Properties.Version, CancellationToken.None);
 
             errorLabel.Text = $"Saved. New version: {result.Version}";
             // 親に features_reload 要求
