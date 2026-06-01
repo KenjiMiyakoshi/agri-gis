@@ -1,3 +1,4 @@
+using AgriGis.Api.Errors;
 using AgriGis.Api.Middleware;
 
 namespace AgriGis.Api.Endpoints;
@@ -29,7 +30,3 @@ public static class RequestContext
     }
 }
 
-public sealed class MissingActorException : Exception
-{
-    public MissingActorException() : base("X-Actor header is required") { }
-}
