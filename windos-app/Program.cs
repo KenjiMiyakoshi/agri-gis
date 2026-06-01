@@ -34,8 +34,18 @@ internal static class Program
         // DI 登録せず、MainForm が WebView2 初期化完了後に new する。
 
         services.AddTransient<MainForm>();
+        services.AddTransient<LoginForm>();
 
         using var sp = services.BuildServiceProvider();
+
+        // A402: ログインダイアログを最初に表示。OK 以外で起動中止。
+        using (var login = sp.GetRequiredService<LoginForm>())
+        {
+            if (login.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+        }
 
         Application.Run(sp.GetRequiredService<MainForm>());
     }
