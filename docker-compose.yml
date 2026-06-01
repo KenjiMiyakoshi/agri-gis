@@ -1,0 +1,27 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: agri_postgis
+    environment:
+      POSTGRES_DB: agri_gis
+      POSTGRES_USER: agri_user
+      POSTGRES_PASSWORD: agri_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: agri_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin_pass
+    ports:
+      - "8081:80"
+    depends_on:
+      - postgis
+
+volumes:
+  postgis_data:
