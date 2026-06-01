@@ -27,7 +27,7 @@ public sealed class UpdateInvariantTests : IAsyncLifetime
     public async Task Update_MovesOldToHistory_BumpsVersion_AddsAudit()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
         // 事前 POST
         var createBody = new

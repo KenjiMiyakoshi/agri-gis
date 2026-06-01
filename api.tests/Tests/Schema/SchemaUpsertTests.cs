@@ -20,7 +20,7 @@ public sealed class SchemaUpsertTests : IAsyncLifetime
     public async Task SchemaUpsert_TwoTimes_BumpsVersionTo3_AndClosesOldRows()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
         var schemaV2 = new
         {

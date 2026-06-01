@@ -27,7 +27,7 @@ public sealed class DeleteInvariantTests : IAsyncLifetime
     public async Task Delete_RemovesCurrent_ArchivesToHistory_AddsAudit()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
-        var client = new ApiClientFactory(api).WithActor("alice").Build();
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
         // 事前 POST
         var createBody = new
