@@ -41,3 +41,6 @@ app.MapGroup("/api/features").MapFeatureEndpoints();
 app.MapGroup("/api/admin").MapAdminEndpoints();
 
 app.Run();
+
+// WebApplicationFactory<Program> から参照できるようにする (xUnit テスト用)
+public partial class Program { }
