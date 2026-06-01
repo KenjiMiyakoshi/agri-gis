@@ -83,9 +83,8 @@ public sealed class ApiClient : IApiClient
         using var content = JsonContent.Create(req, options: JsonOpts);
         using var msg = new HttpRequestMessage(HttpMethod.Patch, $"/api/features/{entityId}") { Content = content };
         SetActor(msg, actor);
-        msg.Headers.IfMatch.Add(new EntityTagHeaderValue($"\"{ifMatchVersion}\""));
-        // 一部サーバ実装は EntityTagHeaderValue 形式を要求する。サーバ側は素の数値も受けるため
-        // 互換用に X-If-Match-Version も載せる
+        // サーバ側は素の数値 (例: "1") を int.TryParse で読む実装 (FeatureEndpoints.cs)。
+        // ETag 形式 ("\"1\"") を二重送出すると HTTP 結合値 "1, \"1\"" になり 428 を引く。
         msg.Headers.TryAddWithoutValidation("If-Match", ifMatchVersion.ToString());
 
         using var res = await _http.SendAsync(msg, ct);
