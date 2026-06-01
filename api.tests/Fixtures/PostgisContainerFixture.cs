@@ -1,0 +1,70 @@
+using Npgsql;
+using Testcontainers.PostgreSql;
+using Xunit;
+
+namespace AgriGis.Api.Tests.Fixtures;
+
+// PostGIS コンテナをクラスフィクスチャで共有起動。
+// 起動時に db/init/001_init.sql → db/init/002_seed.sql → db/migration/*.sql を順に流す。
+// 各テストは DbReset.RunAsync で行を初期化してから走る前提。
+public sealed class PostgisContainerFixture : IAsyncLifetime
+{
+    private PostgreSqlContainer? _container;
+    public string ConnectionString { get; private set; } = "";
+
+    public async Task InitializeAsync()
+    {
+        _container = new PostgreSqlBuilder()
+            .WithImage("postgis/postgis:16-3.4")
+            .WithDatabase("agri_gis")
+            .WithUsername("agri_user")
+            .WithPassword("agri_pass")
+            .Build();
+
+        await _container.StartAsync();
+        ConnectionString = _container.GetConnectionString();
+
+        // 順序: init (basic schema + seed) → migration (新カラム/関数を被せる)
+        // ※ 002_seed.sql は既に新スキーマ前提の形になっているため、
+        //    001_init で feature_current.created_by 列が無い状態で 002_seed を流すと失敗する。
+        //    init の seed は後で TRUNCATE+再投入 (DbReset) で扱うので、ここでは 001_init のみ流して
+        //    その後に migration 群 → 最後に 002_seed を流す。
+        await RunSqlFile("db/init/001_init.sql");
+        foreach (var f in Directory.EnumerateFiles(SolutionRoot.Resolve("db/migration"), "*.sql").OrderBy(x => x))
+        {
+            await RunSqlFile(f, alreadyAbsolute: true);
+        }
+        await RunSqlFile("db/init/002_seed.sql");
+
+        // layer_schema_version を layers から backfill (migration が空 layers 時に走るとシード行が無い)
+        await ExecuteAsync(@"
+            INSERT INTO layer_schema_version (layer_id, schema_version, schema_json, valid_from, valid_to, created_by)
+            SELECT layer_id, schema_version, schema_json, now(), NULL, 'system'
+              FROM layers
+            ON CONFLICT (layer_id, schema_version) DO NOTHING;");
+    }
+
+    public Task DisposeAsync() => _container is null ? Task.CompletedTask : _container.DisposeAsync().AsTask();
+
+    private async Task RunSqlFile(string path, bool alreadyAbsolute = false)
+    {
+        var fullPath = alreadyAbsolute ? path : SolutionRoot.Resolve(path);
+        var sql = await File.ReadAllTextAsync(fullPath);
+        await ExecuteAsync(sql);
+    }
+
+    private async Task ExecuteAsync(string sql)
+    {
+        await using var conn = new NpgsqlConnection(ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        await cmd.ExecuteNonQueryAsync();
+    }
+}
+
+// Testcontainers コンテナはテストクラス間で 1 つを使い回す。
+[CollectionDefinition(Name)]
+public sealed class PostgisCollection : ICollectionFixture<PostgisContainerFixture>
+{
+    public const string Name = "postgis";
+}
