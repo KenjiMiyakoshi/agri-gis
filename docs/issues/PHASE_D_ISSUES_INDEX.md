@@ -2,32 +2,30 @@
 
 `PHASE_D_DESIGN_P.md` 分割。`D1xx`=PoC/Infra/DB / `D2xx`=API / `D3xx`=WebGIS / `D4xx`=WinForms / `D5xx`=Tests / `D6xx`=Docs。S=0.5d / M=1d / L=1.5d。
 
-## 一覧 (17 Issue / 約 11.0-11.5d)
+## 一覧 (20 Issue / 約 11.0-11.5d)
 
-| # | タイトル | 工数 | 主担当 | 依存 |
-|---|---|---|---|---|
-| D100 | GeoServer 同梱 PoC (Gate、`tools/poc/GeoServerCheck/`) | M(1d) | infra | — |
-| D101 | dev `docker-compose.yml` に geoserver サービス追加 + healthcheck | S(0.5d) | infra | D100 |
-| D102 | DB migration 4 本 (`0D01-0D04`) + bootstrap | M(1d) | db | D101 |
-| D103 | JWT 発行/検証に `sid_session` claim 追加 + `user_sessions` lifecycle | S(0.5d) | api | D101 |
-| D201 | `GET /tiles/{layerId}/{theme}/{z}/{x}/{y}.png` proxy endpoint | S(0.5d) | api | D102,D103 |
-| D202 | `POST /api/selection` + `GET/DELETE /tiles/selection/{sid}/...` | M(0.8d) | api | D102,D103 |
-| D203 | admin theme CRUD + GeoServer REST 同期 (`IGeoServerStyleSync`) | M(0.6d) | api | D102 |
-| D204 | `POST /api/auth/logout` + `selection_sets` cascade 削除 | S(0.3d) | api | D102,D103 |
-| D205 | `GET /api/features?layerId=` に Sunset ヘッダ + `IApiClient.GetFeaturesAsync` 削除 | S(0.3d) | api | D201,D202 |
-| D301 | WebGIS: `VectorLayer` → `TileLayer` 主役切替 + theme 切替 | M(0.8d) | webgis | D201,D203 |
-| D302 | WebGIS: 選択 2 段パイプライン (OL Style 暫定 → サーバタイル差替) | M(0.7d) | webgis | D202,D301 |
-| D303 | WebGIS: bridge envelope 拡張 + `?layerId=` を 410 化 | S(0.5d) | webgis | D205,D301,D302 |
-| D401 | WinForms: `MainForm` bridge handler 更新 + `ApiClient` メソッド差替 | M(0.6d) | winforms | D303 |
-| D402 | WinForms: `AttributeEditorControl` N 件モード | S(0.4d) | winforms | D401 |
-| D501 | api.tests 新規 4 件 (tile proxy / selection / admin style / logout) | M(0.8d) | tests | D205,D401 |
-| D502 | webgis vitest 新規 2 件 (tileLayer / selection) | S(0.4d) | tests | D303 |
-| D503 | windos-app.tests 新規 2 件 (theme change / N 件モード) | S(0.4d) | tests | D402 |
-| D504 | `?layerId=` 依存テスト書き換え + 50 万件性能 smoke | M(0.8d) | tests | D205,D501 |
-| D601 | `docs/rendering.md` (Phase D アーキ解説) | S(0.3d) | docs | D504 |
-| D602 | `docs/deploy/geoserver-prod.md` + `docs/PHASE_D_INDEX.md` 最終化 | S(0.3d) | docs | D504 |
-
-(17 Issue + WD5 で D505 を Issue 化しない: 性能 smoke は D504 に統合)
+| # | GH | タイトル | 工数 | 主担当 | 依存 |
+|---|---|---|---|---|---|
+| D100 | [#169](https://github.com/KenjiMiyakoshi/agri-gis/issues/169) | GeoServer 同梱 PoC (Gate、`tools/poc/GeoServerCheck/`) | M(1d) | infra | — |
+| D101 | [#170](https://github.com/KenjiMiyakoshi/agri-gis/issues/170) | dev `docker-compose.yml` に geoserver サービス追加 + healthcheck | S(0.5d) | infra | D100 |
+| D102 | [#171](https://github.com/KenjiMiyakoshi/agri-gis/issues/171) | DB migration 4 本 (`0D01-0D04`) + bootstrap | M(1d) | db | D101 |
+| D103 | [#172](https://github.com/KenjiMiyakoshi/agri-gis/issues/172) | JWT 発行/検証に `sid_session` claim 追加 + `user_sessions` lifecycle | S(0.5d) | api | D101 |
+| D201 | [#173](https://github.com/KenjiMiyakoshi/agri-gis/issues/173) | `GET /tiles/{layerId}/{theme}/{z}/{x}/{y}.png` proxy endpoint | S(0.5d) | api | D102,D103 |
+| D202 | [#174](https://github.com/KenjiMiyakoshi/agri-gis/issues/174) | `POST /api/selection` + `GET/DELETE /tiles/selection/{sid}/...` | M(0.8d) | api | D102,D103 |
+| D203 | [#175](https://github.com/KenjiMiyakoshi/agri-gis/issues/175) | admin theme CRUD + GeoServer REST 同期 (`IGeoServerStyleSync`) | M(0.6d) | api | D102 |
+| D204 | [#176](https://github.com/KenjiMiyakoshi/agri-gis/issues/176) | `POST /api/auth/logout` + `selection_sets` cascade 削除 | S(0.3d) | api | D102,D103 |
+| D205 | [#177](https://github.com/KenjiMiyakoshi/agri-gis/issues/177) | `GET /api/features?layerId=` に Sunset ヘッダ + `IApiClient.GetFeaturesAsync` 削除 | S(0.3d) | api | D201,D202 |
+| D301 | [#178](https://github.com/KenjiMiyakoshi/agri-gis/issues/178) | WebGIS: `VectorLayer` → `TileLayer` 主役切替 + theme 切替 | M(0.8d) | webgis | D201,D203 |
+| D302 | [#179](https://github.com/KenjiMiyakoshi/agri-gis/issues/179) | WebGIS: 選択 2 段パイプライン (OL Style 暫定 → サーバタイル差替) | M(0.7d) | webgis | D202,D301 |
+| D303 | [#180](https://github.com/KenjiMiyakoshi/agri-gis/issues/180) | WebGIS: bridge envelope 拡張 + `?layerId=` を 410 化 | S(0.5d) | webgis | D205,D301,D302 |
+| D401 | [#181](https://github.com/KenjiMiyakoshi/agri-gis/issues/181) | WinForms: `MainForm` bridge handler 更新 + `ApiClient` メソッド差替 | M(0.6d) | winforms | D303 |
+| D402 | [#182](https://github.com/KenjiMiyakoshi/agri-gis/issues/182) | WinForms: `AttributeEditorControl` N 件モード | S(0.4d) | winforms | D401 |
+| D501 | [#183](https://github.com/KenjiMiyakoshi/agri-gis/issues/183) | api.tests 新規 4 件 (tile proxy / selection / admin style / logout) | M(0.8d) | tests | D205,D401 |
+| D502 | [#184](https://github.com/KenjiMiyakoshi/agri-gis/issues/184) | webgis vitest 新規 2 件 (tileLayer / selection) | S(0.4d) | tests | D303 |
+| D503 | [#185](https://github.com/KenjiMiyakoshi/agri-gis/issues/185) | windos-app.tests 新規 2 件 (theme change / N 件モード) | S(0.4d) | tests | D402 |
+| D504 | [#186](https://github.com/KenjiMiyakoshi/agri-gis/issues/186) | `?layerId=` 依存テスト書き換え + 50 万件性能 smoke | M(0.8d) | tests | D205,D501 |
+| D601 | [#187](https://github.com/KenjiMiyakoshi/agri-gis/issues/187) | `docs/rendering.md` (Phase D アーキ解説) | S(0.3d) | docs | D504 |
+| D602 | [#188](https://github.com/KenjiMiyakoshi/agri-gis/issues/188) | `docs/deploy/geoserver-prod.md` + `docs/PHASE_D_INDEX.md` 最終化 | S(0.3d) | docs | D504 |
 
 クリティカルパス: D100 → D101 → D102 並列 → D202 → D301 → D302 → D303 → D401 → D402 → D504 → D601/D602 (≒ **9-10 営業日 + バッファ**)
 

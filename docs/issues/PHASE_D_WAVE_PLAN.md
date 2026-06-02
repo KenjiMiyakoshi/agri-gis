@@ -1,6 +1,6 @@
 # agri-gis Phase D Wave 分割計画 (案 P)
 
-`PHASE_D_ISSUES_INDEX.md` の 17 Issue を、Phase A WA1〜WA5 / Phase B WB0〜WB5 / Phase C WC0〜WC4 と同じ流儀で Wave 分割。Phase C より 1 Wave 多い 6 Wave 構成 (WD0〜WD5)、Phase B と同等の 11.5 人日。
+`PHASE_D_ISSUES_INDEX.md` の 20 Issue を、Phase A WA1〜WA5 / Phase B WB0〜WB5 / Phase C WC0〜WC4 と同じ流儀で Wave 分割。Phase C より 1 Wave 多い 6 Wave 構成 (WD0〜WD5)、Phase B と同等の 11.5 人日。
 
 ## 0. 運用前提 (Phase A/B/C 踏襲)
 
@@ -23,7 +23,7 @@
 | **WD3** | WebGIS raster 経路 | D301, D302, D303 | 2.0d | WD2 完了 (tile / selection endpoints 利用) | D301 → D302 → D303 直列 |
 | **WD4** | WinForms bridge | D401, D402 | 1.0d | WD3 完了 (envelope 確定後) | D401 → D402 直列 |
 | **WD5** | テスト + ドキュメント | D501, D502, D503, D504, D601, D602 | 3.0d | WD4 完了 | D501/D502/D503 並列、D504/D601/D602 並列 |
-| | **合計** | **17 Issue** | **11.0-11.5d** | | |
+| | **合計** | **20 Issue** | **11.0-11.5d** | | |
 
 クリティカルパス: WD0 (0.5d) → WD1 (1.5d 直列分) → WD2 (2.5d、並列度高で短縮可) → WD3 (2.0d 直列) → WD4 (1.0d) → WD5 (1.5d 直列分) ≒ **9-10 営業日 + バッファ**。並列度を最大化すれば 8 営業日も視野。
 
