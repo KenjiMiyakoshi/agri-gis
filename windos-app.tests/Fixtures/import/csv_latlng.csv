@@ -1,0 +1,4 @@
+lon,lat,name,value,active
+143.20,42.91,p1,12,true
+143.21,42.91,p2,24,false
+143.22,42.92,p3,7,true
