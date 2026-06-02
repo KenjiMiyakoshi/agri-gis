@@ -24,8 +24,7 @@ public sealed class FakeApiClient : IApiClient
         => Task.FromResult<IReadOnlyList<LayerDto>>(Array.Empty<LayerDto>());
     public Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, CancellationToken ct)
         => throw new NotImplementedException();
-    public Task<FeatureCollectionDto> GetFeaturesAsync(int layerId, DateOnly? asOf, CancellationToken ct)
-        => throw new NotImplementedException();
+    // D205 (WD2): GetFeaturesAsync は interface から削除済
     public Task<FeatureDto> GetFeatureAsync(Guid entityId, DateOnly? asOf, CancellationToken ct)
         => throw new NotImplementedException();
     public Task<CreateFeatureResultDto> CreateFeatureAsync(CreateFeatureRequestDto req, CancellationToken ct)

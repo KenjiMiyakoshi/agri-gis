@@ -37,6 +37,15 @@ builder.Services.AddProblemDetails();
 builder.Services.Configure<AgriGis.Api.Options.BulkInsertOptions>(
     builder.Configuration.GetSection(AgriGis.Api.Options.BulkInsertOptions.SectionName));
 
+// D101/D201/D203 (WD1/WD2): GeoServer 接続設定 + HttpClient
+builder.Services.Configure<AgriGis.Api.Options.GeoServerOptions>(
+    builder.Configuration.GetSection(AgriGis.Api.Options.GeoServerOptions.SectionName));
+builder.Services.AddHttpClient("geoserver", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddScoped<AgriGis.Api.Auth.IGeoServerStyleSync, AgriGis.Api.Auth.GeoServerStyleSync>();
+
 // JWT 基盤 (WA2/A201)。middleware 配線 (UseAuthentication/UseAuthorization) は WA3 (A204) で行う。
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<PasswordHasher>();
@@ -122,6 +131,17 @@ adminGroup.MapAdminEndpoints();
 adminGroup.MapGroup("/organizations").MapAdminOrgsEndpoints();
 adminGroup.MapGroup("/users").MapAdminUsersEndpoints();
 adminGroup.MapGroup("/layers").MapAdminLayersEndpoints();
+// D203 (WD2): admin theme CRUD (GET/PUT /api/admin/layers/{id}/style)
+adminGroup.MapGroup("/layers").MapAdminLayerStyleEndpoints();
+
+// D201 (WD2): GET /tiles/{layerId}/{theme}/{z}/{x}/{y}.png + selection overlay
+//   tile は admin/general/guest 全員、selection は Bearer + owner
+var tilesGroup = app.MapGroup("/tiles").RequireAuthorization();
+tilesGroup.MapTilesEndpoints();
+tilesGroup.MapTilesSelectionEndpoint();
+
+// D202 (WD2): POST /api/selection + DELETE /api/selection/{sid}
+app.MapGroup("/api/selection").MapSelectionEndpoints().RequireAuthorization();
 
 app.Run();
 
