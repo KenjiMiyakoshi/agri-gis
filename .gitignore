@@ -14,3 +14,17 @@ sample-data/
 # 性能スパイクの生成物
 db/fixtures/perf/sample_*.geojson
 db/fixtures/perf/wb0_results.txt
+
+# .NET ビルド成果物
+**/bin/
+**/obj/
+
+# Node.js
+**/node_modules/
+**/dist/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
