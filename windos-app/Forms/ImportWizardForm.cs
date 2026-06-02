@@ -1,10 +1,14 @@
 using AgriGis.Desktop.Services;
+using AgriGis.Desktop.Services.Import;
+using AgriGis.Desktop.Services.Import.Encoding;
+using AgriGis.Desktop.Services.Import.Srid;
 using AgriGis.Desktop.ViewModels;
+using Microsoft.Extensions.Options;
 
 namespace AgriGis.Desktop.Forms;
 
-// WB4 B408: 3 ステップウィザード。
-// Step1: SourceFormat + ファイル選択 + (CSV) lon/lat 列確定 + SRID
+// WB4 B408 / WC3 C401: 3 ステップウィザード。
+// Step1: SourceFormat + ファイル選択 + 形式別 options (CSV / Shapefile)
 // Step2: 推論済みスキーマの確認・調整 (SchemaGrid)
 // Step3: 投入実行 (ProgressBar、キャンセル)
 public partial class ImportWizardForm : Form
@@ -12,9 +16,21 @@ public partial class ImportWizardForm : Form
     private readonly ImportWizardViewModel _vm;
     private const int ChunkSize = 1000;
 
-    public ImportWizardForm(IApiClient api)
+    // ComboBox items: ラベル → 内部 sourceFormat 値。null は非活性表示。
+    private static readonly (string Label, string? FormatValue)[] FormatItems =
     {
-        _vm = new ImportWizardViewModel(api);
+        ("GeoJSON", "geojson"),
+        ("CSV (lat/lng)", "csv"),
+        ("Shapefile ZIP", "shapefile"),
+        ("MapInfo MIF/MID (Phase C' 対応予定)", null),
+        ("MapInfo TAB (Phase C' 対応予定)", null),
+    };
+
+    public ImportWizardForm(IApiClient api,
+        IEncodingResolver encodingResolver,
+        IOptions<ImportOptions> importOptions)
+    {
+        _vm = new ImportWizardViewModel(api, encodingResolver, importOptions);
         InitializeComponent();
         WireEvents();
         UpdateButtons();
@@ -22,48 +38,132 @@ public partial class ImportWizardForm : Form
 
     private void WireEvents()
     {
-        // 形式選択 (geojson / csv のみ有効)
-        sourceFormatCombo.Items.AddRange(new object[] { "geojson", "csv", "shapefile (Phase C)", "mif (Phase C)", "tab (Phase C)" });
+        // 形式選択 (ラベル + 内部値の (string,string?) tuple をそのまま Items に入れる)
+        sourceFormatCombo.DataSource = FormatItems;
+        sourceFormatCombo.DisplayMember = "Label";
+        sourceFormatCombo.ValueMember = "FormatValue";
         sourceFormatCombo.SelectedIndex = 0;
         sourceFormatCombo.SelectedIndexChanged += (_, _) =>
         {
-            var selected = sourceFormatCombo.SelectedItem?.ToString() ?? "geojson";
-            if (selected.Contains("Phase C"))
+            if (sourceFormatCombo.SelectedItem is not ValueTuple<string, string?> tuple) return;
+            var fmt = tuple.Item2;
+            if (fmt is null)
             {
-                MessageBox.Show("この形式は Phase C で対応予定です。", "AgriGis",
+                MessageBox.Show("この形式は Phase C' で対応予定です。", "AgriGis",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 sourceFormatCombo.SelectedIndex = 0;
                 return;
             }
-            _vm.SourceFormat = selected;
-            csvOptionsGroup.Visible = selected == "csv";
+            _vm.SourceFormat = fmt;
+            csvOptionsGroup.Visible = fmt == "csv";
+            shapefileOptionsGroup.Visible = fmt == "shapefile";
+            shapefileInlinePanel.Visible = fmt == "shapefile";
+            UpdateFileFilter();
         };
 
         browseButton.Click += (_, _) =>
         {
-            using var dlg = new OpenFileDialog
-            {
-                Filter = "GeoJSON / CSV|*.geojson;*.json;*.csv|All|*.*"
-            };
+            using var dlg = new OpenFileDialog { Filter = GetFilterForFormat() };
             if (dlg.ShowDialog(this) == DialogResult.OK)
             {
                 _vm.FilePath = dlg.FileName;
                 filePathLabel.Text = dlg.FileName;
+                // shapefile のときは選択直後に検出ボタンを使ってもらうため Inline panel を更新
+                if (_vm.SourceFormat == "shapefile")
+                {
+                    detectStatusLabel.Text = "[自動検出] を押してください";
+                }
                 UpdateButtons();
             }
         };
 
         layerNameText.TextChanged += (_, _) => { _vm.LayerName = layerNameText.Text; UpdateButtons(); };
+
+        // CSV options
         lonColText.TextChanged += (_, _) => { if (int.TryParse(lonColText.Text, out var v)) _vm.LonColIndex = v; };
         latColText.TextChanged += (_, _) => { if (int.TryParse(latColText.Text, out var v)) _vm.LatColIndex = v; };
         sridText.TextChanged += (_, _) => { if (int.TryParse(sridText.Text, out var v)) _vm.SourceSrid = v; };
+
+        // Shapefile options: 検出ボタン + encoding 上書き + 手動 SRID
+        detectButton.Click += async (_, _) => await DetectAsync();
+        encodingCombo.Items.AddRange(new object[] { "(.cpg 自動)", "CP932", "UTF-8", "EUC-JP" });
+        encodingCombo.SelectedIndex = 0;
+        encodingCombo.SelectedIndexChanged += (_, _) =>
+        {
+            var sel = encodingCombo.SelectedItem?.ToString();
+            _vm.EncodingOverride = (sel == null || sel.StartsWith("(")) ? null : sel;
+        };
+        manualSridText.TextChanged += (_, _) =>
+        {
+            _vm.ManualSridInput = int.TryParse(manualSridText.Text, out var v) ? v : null;
+            UpdateButtons();
+        };
 
         nextButton.Click += async (_, _) => await NextAsync();
         backButton.Click += (_, _) => { _vm.PreviousStep(); ShowStep(); };
         cancelButton.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
-        _vm.PropertyChanged += (_, _) => UpdateButtons();
+        _vm.PropertyChanged += (_, e) =>
+        {
+            UpdateButtons();
+            if (e.PropertyName == nameof(ImportWizardViewModel.DetectedEncoding) ||
+                e.PropertyName == nameof(ImportWizardViewModel.DetectedSrid) ||
+                e.PropertyName == nameof(ImportWizardViewModel.SridResolutionState) ||
+                e.PropertyName == nameof(ImportWizardViewModel.FieldCount) ||
+                e.PropertyName == nameof(ImportWizardViewModel.FeatureCount))
+            {
+                UpdateShapefileInline();
+            }
+        };
         schemaGrid.SetFields(_vm.InferredFields);
+
+        // 初期状態
+        csvOptionsGroup.Visible = false;
+        shapefileOptionsGroup.Visible = false;
+        shapefileInlinePanel.Visible = false;
+    }
+
+    private string GetFilterForFormat() => _vm.SourceFormat switch
+    {
+        "geojson" => "GeoJSON|*.geojson;*.json|All|*.*",
+        "csv" => "CSV|*.csv|All|*.*",
+        "shapefile" => "Shapefile ZIP|*.zip|All|*.*",
+        _ => "All|*.*"
+    };
+
+    private void UpdateFileFilter()
+    {
+        // OpenFileDialog は呼び出し時にだけ参照されるので、UI 側で表示だけ整える
+        filePathHint.Text = _vm.SourceFormat == "shapefile" ? "ZIP ファイル:" : "ファイル:";
+    }
+
+    private async Task DetectAsync()
+    {
+        try
+        {
+            detectStatusLabel.Text = "検出中...";
+            await _vm.DetectShapefileAsync(CancellationToken.None);
+            detectStatusLabel.Text = "検出完了";
+            UpdateShapefileInline();
+        }
+        catch (Exception ex)
+        {
+            detectStatusLabel.Text = $"検出失敗: {ex.Message}";
+        }
+    }
+
+    private void UpdateShapefileInline()
+    {
+        detectedEncodingLabel.Text = _vm.DetectedEncoding is null ? "未検出"
+            : $"文字コード: {_vm.DetectedEncoding}";
+        detectedSridLabel.Text = _vm.DetectedSrid is null ? "SRID: 未検出"
+            : $"SRID: {_vm.DetectedSrid}";
+        sridStateLabel.Text = _vm.SridResolutionState is null ? "" : $"  ({_vm.SridResolutionState})";
+        countsLabel.Text = $"フィールド数: {_vm.FieldCount} / 形状数: {_vm.FeatureCount}";
+
+        // FallbackToPrompt 時のみ手動 SRID 入力欄を強調
+        manualSridText.Enabled = _vm.SridResolutionState == SridResolutionState.FallbackToPrompt
+            || _vm.SridResolutionState == null;
     }
 
     private void ShowStep()
