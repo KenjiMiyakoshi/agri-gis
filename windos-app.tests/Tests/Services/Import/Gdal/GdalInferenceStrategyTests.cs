@@ -77,6 +77,23 @@ public sealed class GdalInferenceStrategyTests
     }
 
     [Fact]
+    public void Infer_OftIntegerWithBooleanSubType_MapsToBoolean()
+    {
+        // Phase C 実機 smoke test 回帰防止: OGR の OFSTBoolean subtype は
+        // "integer" ではなく "boolean" に推論する必要がある (API バリデータ整合)。
+        var (ds, layer) = CreateMemoryLayer();
+        using (ds)
+        using (var fd = new FieldDefn("active", FieldType.OFTInteger))
+        {
+            fd.SetSubType(FieldSubType.OFSTBoolean);
+            layer.CreateField(fd, 1);
+            var fields = GdalInferenceStrategy.Infer(layer);
+            var x = fields.Single(f => f.Name == "active");
+            Assert.Equal("boolean", x.Type);
+        }
+    }
+
+    [Fact]
     public void Infer_NullValues_MarkNullable()
     {
         var (ds, layer) = CreateMemoryLayer();

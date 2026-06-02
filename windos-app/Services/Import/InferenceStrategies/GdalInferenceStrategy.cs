@@ -36,6 +36,7 @@ public sealed class GdalInferenceStrategy : IInferenceStrategy
         {
             var fd = defn.GetFieldDefn(i);
             var type = fd.GetFieldType();
+            var subType = fd.GetSubType();
             if (type == FieldType.OFTBinary)
             {
                 warnings.Add($"OFTBinary field skipped: {fd.GetName()}");
@@ -45,8 +46,8 @@ public sealed class GdalInferenceStrategy : IInferenceStrategy
             var field = new InferredField
             {
                 Name = fd.GetName(),
-                Type = MapOftToString(type),
-                Required = true,   // 後段で nullable 確定後に Required = !Nullable に揃える
+                Type = MapOftToString(type, subType),
+                Required = true,
                 Nullable = false
             };
             fields.Add(field);
@@ -107,14 +108,17 @@ public sealed class GdalInferenceStrategy : IInferenceStrategy
         return fields;
     }
 
-    internal static string MapOftToString(FieldType oft) => oft switch
-    {
-        FieldType.OFTInteger or FieldType.OFTInteger64 => "integer",
-        FieldType.OFTReal => "number",
-        FieldType.OFTDate or FieldType.OFTDateTime or FieldType.OFTTime => "date",
-        FieldType.OFTStringList or FieldType.OFTIntegerList or FieldType.OFTInteger64List
-            or FieldType.OFTRealList => "string",
-        FieldType.OFTString => "string",
-        _ => "string"
-    };
+    internal static string MapOftToString(FieldType oft, FieldSubType subType = FieldSubType.OFSTNone)
+        => oft switch
+        {
+            FieldType.OFTInteger or FieldType.OFTInteger64
+                when subType == FieldSubType.OFSTBoolean => "boolean",
+            FieldType.OFTInteger or FieldType.OFTInteger64 => "integer",
+            FieldType.OFTReal => "number",
+            FieldType.OFTDate or FieldType.OFTDateTime or FieldType.OFTTime => "date",
+            FieldType.OFTStringList or FieldType.OFTIntegerList or FieldType.OFTInteger64List
+                or FieldType.OFTRealList => "string",
+            FieldType.OFTString => "string",
+            _ => "string"
+        };
 }

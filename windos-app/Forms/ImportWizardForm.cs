@@ -16,14 +16,23 @@ public partial class ImportWizardForm : Form
     private readonly ImportWizardViewModel _vm;
     private const int ChunkSize = 1000;
 
-    // ComboBox items: ラベル → 内部 sourceFormat 値。null は非活性表示。
-    private static readonly (string Label, string? FormatValue)[] FormatItems =
+    // ComboBox items: ラベル → 内部 sourceFormat 値。FormatValue null は非活性表示。
+    // (ValueTuple は ComboBox の DataSource バインドで PropertyDescriptor を作れないため
+    //  通常のクラスで持つ)
+    private sealed class FormatItem
     {
-        ("GeoJSON", "geojson"),
-        ("CSV (lat/lng)", "csv"),
-        ("Shapefile ZIP", "shapefile"),
-        ("MapInfo MIF/MID (Phase C' 対応予定)", null),
-        ("MapInfo TAB (Phase C' 対応予定)", null),
+        public string Label { get; init; } = "";
+        public string? FormatValue { get; init; }
+        public override string ToString() => Label;
+    }
+
+    private static readonly FormatItem[] FormatItems =
+    {
+        new() { Label = "GeoJSON",                                   FormatValue = "geojson" },
+        new() { Label = "CSV (lat/lng)",                             FormatValue = "csv" },
+        new() { Label = "Shapefile ZIP",                             FormatValue = "shapefile" },
+        new() { Label = "MapInfo MIF/MID (Phase C' 対応予定)",       FormatValue = null },
+        new() { Label = "MapInfo TAB (Phase C' 対応予定)",           FormatValue = null },
     };
 
     public ImportWizardForm(IApiClient api,
@@ -45,8 +54,8 @@ public partial class ImportWizardForm : Form
         sourceFormatCombo.SelectedIndex = 0;
         sourceFormatCombo.SelectedIndexChanged += (_, _) =>
         {
-            if (sourceFormatCombo.SelectedItem is not ValueTuple<string, string?> tuple) return;
-            var fmt = tuple.Item2;
+            if (sourceFormatCombo.SelectedItem is not FormatItem item) return;
+            var fmt = item.FormatValue;
             if (fmt is null)
             {
                 MessageBox.Show("この形式は Phase C' で対応予定です。", "AgriGis",
@@ -208,7 +217,13 @@ public partial class ImportWizardForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"失敗: {ex.Message}", "AgriGis", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            var msg = ex.Message;
+            if (ex is ApiException apiEx && apiEx.Problem.Errors.Count > 0)
+            {
+                msg += "\n\n詳細:\n" + string.Join("\n",
+                    apiEx.Problem.Errors.Select(e => $"- {e.AttributeKey} [{e.Code}]: {e.Message}"));
+            }
+            MessageBox.Show($"失敗: {msg}", "AgriGis", MessageBoxButtons.OK, MessageBoxIcon.Error);
             UpdateButtons();
         }
     }
