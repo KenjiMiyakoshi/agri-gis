@@ -2,8 +2,12 @@ using System.Diagnostics;
 using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Forms;
 using AgriGis.Desktop.Services;
+using AgriGis.Desktop.Services.Import;
+using AgriGis.Desktop.Services.Import.Encoding;
+using AgriGis.Desktop.Services.Import.Srid;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace AgriGis.Desktop;
 
@@ -39,6 +43,12 @@ internal static class Program
 
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
+
+        // WC2 C104 / C105: Phase C インポート設定 (SridFallbackPolicy / DefaultDbfEncoding)
+        services.Configure<ImportOptions>(configuration.GetSection(ImportOptions.SectionName));
+        services.AddSingleton<IEncodingResolver, CpgFileResolver>();
+        // OgrSridDetector が既定。ManualSridDetector は UI 入力後に new で差し替える経路
+        services.AddTransient<ISridDetector, OgrSridDetector>();
 
         // A401: セッション保持 (in-memory)。A402 (LoginForm) でログイン成功時に Set される
         services.AddSingleton<ISessionStore, InMemorySessionStore>();
