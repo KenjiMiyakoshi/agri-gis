@@ -49,8 +49,10 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, schemaRes.StatusCode);
     }
 
-    [Fact(Skip = "D504 (WD5) で {entityId} 単発 GET + DB SELECT ベースに書き換え予定。Phase D D303 で ?layerId= は 410 Gone。")]
-    public async Task DeletedLayer_FeaturesGet_ReturnsEmpty()
+    // D504 (WD5): 削除前後の確認は ?layerId= 経路ではなく {entityId} 単発 GET で行う。
+    // ?layerId= は Phase D で 410 Gone のため、bitemporal 検証は個別 entity でカバー。
+    [Fact]
+    public async Task DeletedLayer_FeaturesGet_ReturnsNotFound()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
         var admin = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
@@ -71,10 +73,12 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
             entityIds.Add(Guid.Parse(created!.EntityId));
         }
 
-        // 削除前は GET で 3 件返る
-        var beforeRes = await admin.GetAsync("/api/features?layerId=2");
-        var beforeFc = await beforeRes.Content.ReadFromJsonAsync<FeatureCollection>();
-        Assert.Equal(3, beforeFc!.Features.Count);
+        // 削除前は単発 GET で 200
+        foreach (var id in entityIds)
+        {
+            var res = await admin.GetAsync($"/api/features/{id}");
+            Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        }
 
         // layer 2 を論理削除 (DB 直接 UPDATE で代用、AdminLayers DELETE は別途テスト)
         await using (var conn = new NpgsqlConnection(_pg.ConnectionString))
@@ -85,12 +89,14 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
             await cmd.ExecuteNonQueryAsync();
         }
 
-        // 削除後の GET 一覧 → 0 件
-        var afterRes = await admin.GetAsync("/api/features?layerId=2");
-        var afterFc = await afterRes.Content.ReadFromJsonAsync<FeatureCollection>();
-        Assert.Empty(afterFc!.Features);
+        // 削除後は全 entity の単発 GET が 404 (deleted_at IS NULL 条件で除外)
+        foreach (var id in entityIds)
+        {
+            var res = await admin.GetAsync($"/api/features/{id}");
+            Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+        }
 
-        // 単体 GET → 404
+        // 単体 GET → 404 (代表で 1 件再確認)
         var singleRes = await admin.GetAsync($"/api/features/{entityIds[0]}");
         Assert.Equal(HttpStatusCode.NotFound, singleRes.StatusCode);
 
