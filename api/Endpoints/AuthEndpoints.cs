@@ -11,8 +11,11 @@ public static class AuthEndpoints
     public static RouteGroupBuilder MapAuthEndpoints(this RouteGroupBuilder group)
     {
         // POST /api/auth/login (anonymous): login_id + password → JWT
+        // D103 (WD1): user_sessions レコードを INSERT してから JWT に sid_session を詰める
         group.MapPost("/login", async (LoginRequestDto req, NpgsqlDataSource db,
-                                       JwtService jwt, PasswordHasher hasher) =>
+                                       JwtService jwt, PasswordHasher hasher,
+                                       IUserSessionStore sessionStore,
+                                       CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.LoginId) || string.IsNullOrEmpty(req.Password))
             {
@@ -48,7 +51,11 @@ public static class AuthEndpoints
                 return Results.Unauthorized();
             }
 
-            var (token, expiresAt) = jwt.IssueAccessToken(userId, loginId, displayName, orgId, roles);
+            // D103 (WD1): jti を先に確定 → user_sessions INSERT で session_id 取得 → JWT 発行
+            var jti = Guid.NewGuid();
+            var sessionId = await sessionStore.CreateSessionAsync(userId, jti.ToString(), ct);
+            var (token, expiresAt) = jwt.IssueAccessToken(
+                userId, loginId, displayName, orgId, roles, jti, sessionId);
 
             return Results.Ok(new LoginResponseDto(
                 AccessToken: token,

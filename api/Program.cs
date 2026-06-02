@@ -41,6 +41,9 @@ builder.Services.Configure<AgriGis.Api.Options.BulkInsertOptions>(
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<PasswordHasher>();
 
+// D103 (WD1): user_sessions テーブル経由の JWT lifecycle 管理
+builder.Services.AddScoped<IUserSessionStore, UserSessionStore>();
+
 var jwtBootstrap = new JwtService(builder.Configuration); // fail-fast: 起動時に secret 検証
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
@@ -57,6 +60,27 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ClockSkew = TimeSpan.FromSeconds(30),
             NameClaimType = "login_id",
             RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+        };
+
+        // D103 (WD1): 検証通過後に user_sessions.deleted_at IS NULL を確認。
+        // 既発行 (Phase A/B/C 期) token は sid_session claim を持たないため Fail で 401。
+        // 同 token を持っていても logout 済なら 401。
+        o.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async ctx =>
+            {
+                var raw = ctx.Principal?.FindFirst("sid_session")?.Value;
+                if (string.IsNullOrEmpty(raw) || !Guid.TryParse(raw, out var sessionId))
+                {
+                    ctx.Fail("missing sid_session claim (Phase D requires re-login)");
+                    return;
+                }
+                var store = ctx.HttpContext.RequestServices.GetRequiredService<IUserSessionStore>();
+                if (!await store.IsActiveAsync(sessionId, ctx.HttpContext.RequestAborted))
+                {
+                    ctx.Fail("session is invalidated (logout)");
+                }
+            }
         };
     });
 builder.Services.AddAuthorization(o =>

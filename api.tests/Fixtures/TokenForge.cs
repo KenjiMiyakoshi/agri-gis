@@ -2,12 +2,15 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 
 namespace AgriGis.Api.Tests.Fixtures;
 
 // テスト用に HS256 JWT を直接発行する。ApiFactory.TestJwtSecret/Issuer/Audience と一致させる。
 public static class TokenForge
 {
+    // D103 (WD1): connectionString が渡された場合は user_sessions に INSERT してから sid_session claim を埋める。
+    // null の場合は user_sessions レコードを作らない (OnTokenValidated で 401 になる、明示的に「無効 session」テスト用)。
     public static string Issue(
         Guid userId,
         string loginId,
@@ -17,7 +20,9 @@ public static class TokenForge
         TimeSpan? ttl = null,
         string? secret = null,
         string? issuer = null,
-        string? audience = null)
+        string? audience = null,
+        string? connectionString = null,
+        Guid? sessionIdOverride = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret ?? ApiFactory.TestJwtSecret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -36,13 +41,31 @@ public static class TokenForge
         }
         var now = nbf;
 
+        // D103: jti と session_id を確定し、必要なら user_sessions に INSERT
+        var jti = Guid.NewGuid();
+        Guid sessionId;
+        if (sessionIdOverride.HasValue)
+        {
+            sessionId = sessionIdOverride.Value;
+        }
+        else if (connectionString is not null)
+        {
+            sessionId = InsertSessionSync(connectionString, userId, jti.ToString());
+        }
+        else
+        {
+            // user_sessions レコード無し: OnTokenValidated.IsActiveAsync で 401 になるテスト用
+            sessionId = Guid.NewGuid();
+        }
+
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new("login_id", loginId),
             new("display_name", displayName),
             new("org_id", orgId.ToString()),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Jti, jti.ToString()),
+            new("sid_session", sessionId.ToString()),
         };
         foreach (var r in roles)
         {
@@ -58,5 +81,18 @@ public static class TokenForge
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    private static Guid InsertSessionSync(string connectionString, Guid userId, string jwtJti)
+    {
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+        using var cmd = new NpgsqlCommand(
+            "INSERT INTO user_sessions (user_id, jwt_jti) VALUES (@u, @j) RETURNING session_id", conn);
+        cmd.Parameters.AddWithValue("u", userId);
+        cmd.Parameters.AddWithValue("j", jwtJti);
+        var result = cmd.ExecuteScalar();
+        if (result is Guid g) return g;
+        throw new InvalidOperationException("INSERT did not return session_id");
     }
 }
