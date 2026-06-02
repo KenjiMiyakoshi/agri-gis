@@ -1,0 +1,3 @@
+# 生成済 fixture と計測結果はコミットしない (テスト実行時に自動生成される)
+sample_*.geojson
+wb0_results.txt
