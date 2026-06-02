@@ -33,6 +33,10 @@ builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
 
 builder.Services.AddProblemDetails();
 
+// WB3 B203: バルク投入の設定 (MaxCountPerChunk / ChunkDefaultSize)
+builder.Services.Configure<AgriGis.Api.Options.BulkInsertOptions>(
+    builder.Configuration.GetSection(AgriGis.Api.Options.BulkInsertOptions.SectionName));
+
 // JWT 基盤 (WA2/A201)。middleware 配線 (UseAuthentication/UseAuthorization) は WA3 (A204) で行う。
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<PasswordHasher>();
