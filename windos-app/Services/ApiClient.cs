@@ -106,6 +106,74 @@ public sealed class ApiClient : IApiClient
         await EnsureSuccessAsync(res, ct);
     }
 
+    // ----- WB3 B401: AdminLayers CRUD -----
+
+    public async Task<IReadOnlyList<LayerAdminDto>> ListLayersAdminAsync(bool includeDeleted, CancellationToken ct)
+    {
+        var url = $"/api/admin/layers?includeDeleted={(includeDeleted ? "true" : "false")}";
+        using var res = await _http.GetAsync(url, ct);
+        await EnsureSuccessAsync(res, ct);
+        var list = await res.Content.ReadFromJsonAsync<List<LayerAdminDto>>(JsonOpts, ct);
+        return list ?? new List<LayerAdminDto>();
+    }
+
+    public async Task<LayerAdminDto> CreateLayerAsync(CreateLayerRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync("/api/admin/layers", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerAdminDto>(JsonOpts, ct))!;
+    }
+
+    public async Task<LayerAdminDto> UpdateLayerAsync(int layerId, UpdateLayerRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var msg = new HttpRequestMessage(HttpMethod.Patch, $"/api/admin/layers/{layerId}") { Content = content };
+        using var res = await _http.SendAsync(msg, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerAdminDto>(JsonOpts, ct))!;
+    }
+
+    public async Task DeleteLayerAsync(int layerId, CancellationToken ct)
+    {
+        using var res = await _http.DeleteAsync($"/api/admin/layers/{layerId}", ct);
+        await EnsureSuccessAsync(res, ct);
+    }
+
+    // ----- WB3 B401: Import jobs + bulk -----
+
+    public async Task<ImportJobDto> StartImportJobAsync(int layerId, StartImportJobRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync($"/api/admin/layers/{layerId}/import-jobs", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<ImportJobDto>(JsonOpts, ct))!;
+    }
+
+    public async Task<ImportJobDto> GetImportJobAsync(Guid jobId, CancellationToken ct)
+    {
+        using var res = await _http.GetAsync($"/api/admin/layers/import-jobs/{jobId}", ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<ImportJobDto>(JsonOpts, ct))!;
+    }
+
+    public async Task<ImportJobDto> FinalizeImportJobAsync(Guid jobId, FinalizeImportJobRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync($"/api/admin/layers/import-jobs/{jobId}/finalize", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<ImportJobDto>(JsonOpts, ct))!;
+    }
+
+    public async Task<BulkFeaturesResponseDto> BulkInsertFeaturesAsync(
+        int layerId, BulkFeaturesRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync($"/api/admin/layers/{layerId}/features/bulk", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<BulkFeaturesResponseDto>(JsonOpts, ct))!;
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage res, CancellationToken ct)
     {
         if (res.IsSuccessStatusCode) return;
