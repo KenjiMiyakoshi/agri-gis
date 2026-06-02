@@ -1,0 +1,60 @@
+# Phase D WD0 PoC: GeoServer 同梱 + PostGIS JNDI 最小構成
+#
+# 使い方:
+#   cd tools/poc/GeoServerCheck
+#   docker compose up -d
+#   bash verify.sh
+#   docker compose down -v  # 検証完了後
+#
+# 実 PoC 実行はユーザーが手動で。本ファイルはスケルトン提供のみ。
+
+version: '3.8'
+
+services:
+  postgis-poc:
+    image: postgis/postgis:16-3.4
+    container_name: agri-gis-poc-postgis
+    environment:
+      POSTGRES_USER: agri_user
+      POSTGRES_PASSWORD: agri_pass
+      POSTGRES_DB: agri_gis_poc
+    ports:
+      - "55432:5432"  # 既存 dev postgis (5432) と衝突回避
+    volumes:
+      - ./pg_init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agri_user -d agri_gis_poc"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  geoserver-poc:
+    image: kartoza/geoserver:2.25.0
+    container_name: agri-gis-poc-geoserver
+    environment:
+      GEOSERVER_DATA_DIR: /opt/geoserver/data_dir
+      GEOSERVER_ADMIN_USER: admin
+      GEOSERVER_ADMIN_PASSWORD: geoserver_poc
+      INITIAL_MEMORY: 1G
+      MAXIMUM_MEMORY: 2G
+      # PostGIS JNDI 接続用環境変数 (kartoza image 仕様)
+      DB_BACKEND: POSTGRES
+      HOST: postgis-poc
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: agri_gis_poc
+      POSTGRES_USER: agri_user
+      POSTGRES_PASS: agri_pass
+      ENABLE_JSONP: "true"
+      DISABLE_WEB_INTERFACE: "false"
+    ports:
+      - "18080:8080"  # ホスト 18080 → GeoServer 8080
+    volumes:
+      - ./data_dir:/opt/geoserver/data_dir
+    depends_on:
+      postgis-poc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/geoserver/web/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
