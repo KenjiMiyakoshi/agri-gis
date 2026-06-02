@@ -193,35 +193,64 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         SetStatus($"Layer {layer.LayerId} selected");
     }
 
+    // D401 (WD4): bridge handler を features_selected (entityIds 配列) 受領に書き換え。
+    // 単数モード (entityIds.Length == 1) は既存の LoadFeature、複数モードは LoadFeatures (D402)。
+    // selection_overlay_ready / theme_change の受領も追加 (現状はステータスバーログのみ)。
     private async void OnBridgeMessage(object? sender, Envelope envelope)
     {
-        if (envelope.Type != "feature_clicked")
+        try
+        {
+            if (envelope.Type == "features_selected")
+            {
+                await HandleFeaturesSelectedAsync(envelope.Payload);
+            }
+            else if (envelope.Type == "selection_overlay_ready")
+            {
+                if (envelope.Payload.TryGetProperty("count", out var countProp) &&
+                    envelope.Payload.TryGetProperty("sid", out var sidProp))
+                {
+                    SetStatus($"Selection overlay ready: {countProp.GetInt32()} entities (sid={sidProp.GetString()})");
+                }
+            }
+        }
+        catch (UnauthorizedApiException)
+        {
+            await HandleUnauthorizedAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"bridge message failed ({envelope.Type}): {ex.Message}");
+        }
+    }
+
+    private async Task HandleFeaturesSelectedAsync(System.Text.Json.JsonElement payload)
+    {
+        if (!payload.TryGetProperty("entityIds", out var entityIdsProp) ||
+            entityIdsProp.ValueKind != System.Text.Json.JsonValueKind.Array)
         {
             return;
         }
 
-        try
+        var entityIds = new List<Guid>(entityIdsProp.GetArrayLength());
+        foreach (var idProp in entityIdsProp.EnumerateArray())
         {
-            if (!envelope.Payload.TryGetProperty("entityId", out var entityProp))
-            {
-                return;
-            }
-            var entityIdStr = entityProp.GetString();
-            if (string.IsNullOrEmpty(entityIdStr) || !Guid.TryParse(entityIdStr, out var entityId))
-            {
-                return;
-            }
+            var s = idProp.GetString();
+            if (Guid.TryParse(s, out var g)) entityIds.Add(g);
+        }
 
+        if (entityIds.Count == 0) return;
+
+        if (entityIds.Count == 1)
+        {
+            // 単数モード: 既存 LoadFeature 経路
+            var entityId = entityIds[0];
             var feature = await _api.GetFeatureAsync(entityId, asOf: null, CancellationToken.None);
             var layerId = feature.Properties.LayerId;
             var schemaRes = await _api.GetLayerSchemaAsync(layerId, CancellationToken.None);
-
-            // API DTO → Core DTO へ詰め替え
             var coreSchema = new LayerSchema(
                 schemaRes.Schema.Fields
                     .Select(f => new SchemaField(f.Key, f.Type, f.Required, f.Label))
                     .ToArray());
-
             if (InvokeRequired)
             {
                 Invoke(new Action(() => attributeEditor.LoadFeature(coreSchema, feature)));
@@ -232,14 +261,27 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
             }
             SetStatus($"Feature {entityId} loaded");
         }
-        catch (UnauthorizedApiException)
+        else
         {
-            await HandleUnauthorizedAsync();
+            // N 件モード (D402)
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() => attributeEditor.LoadFeatures(entityIds)));
+            }
+            else
+            {
+                attributeEditor.LoadFeatures(entityIds);
+            }
+            SetStatus($"{entityIds.Count} features selected (multi-mode)");
         }
-        catch (Exception ex)
-        {
-            SetStatus($"feature_clicked failed: {ex.Message}");
-        }
+    }
+
+    // D401 (WD4): theme 切替を WebGIS に送る (theme_change envelope)
+    // 現時点では UI 配置を伴わないため public method として外部から呼べる形で残置。
+    // WD4 後の UI 仕上げ (theme ComboBox 追加) は朝のレビュー時に判断。
+    public void SendThemeChange(int layerId, string theme)
+    {
+        _bridge?.Send("theme_change", new { layerId, theme });
     }
 
     private void OnAttributeEditorSaved(object? sender, int layerId)

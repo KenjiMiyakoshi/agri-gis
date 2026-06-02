@@ -165,6 +165,46 @@ public sealed class ApiClient : IApiClient
         return (await res.Content.ReadFromJsonAsync<BulkFeaturesResponseDto>(JsonOpts, ct))!;
     }
 
+    // ----- D401 (WD4): Phase D Selection / Theme / Logout -----
+
+    public async Task<CreateSelectionResponseDto> CreateSelectionAsync(
+        IReadOnlyList<Guid> entityIds, string? colorHex, CancellationToken ct)
+    {
+        var req = new CreateSelectionRequestDto(entityIds, colorHex);
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync("/api/selection", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<CreateSelectionResponseDto>(JsonOpts, ct))!;
+    }
+
+    public async Task DeleteSelectionAsync(Guid sid, CancellationToken ct)
+    {
+        using var res = await _http.DeleteAsync($"/api/selection/{sid}", ct);
+        await EnsureSuccessAsync(res, ct);
+    }
+
+    public async Task LogoutAsync(CancellationToken ct)
+    {
+        using var content = new StringContent("", Encoding.UTF8, "application/json");
+        using var res = await _http.PostAsync("/api/auth/logout", content, ct);
+        await EnsureSuccessAsync(res, ct);
+    }
+
+    public async Task<LayerStyleDto> GetLayerStyleAsync(int layerId, CancellationToken ct)
+    {
+        using var res = await _http.GetAsync($"/api/admin/layers/{layerId}/style", ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerStyleDto>(JsonOpts, ct))!;
+    }
+
+    public async Task<LayerStyleDto> UpdateLayerStyleAsync(int layerId, LayerStyleDto style, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(style, options: JsonOpts);
+        using var res = await _http.PutAsync($"/api/admin/layers/{layerId}/style", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerStyleDto>(JsonOpts, ct))!;
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage res, CancellationToken ct)
     {
         if (res.IsSuccessStatusCode) return;

@@ -46,6 +46,43 @@ public partial class AttributeEditorControl : UserControl
         FeatureLoaded?.Invoke(this, EventArgs.Empty);
     }
 
+    // D402 (WD4): N 件モード
+    // 複数件選択時は属性編集 UI を表示せず、件数 + sample feature ids のみ表示。
+    // 一括編集は Phase D' 申し送り (POST /api/features/batch-update)。
+    public void LoadFeatures(IReadOnlyList<Guid> entityIds)
+    {
+        _schema = null;
+        _feature = null;
+        errorLabel.Text = "";
+
+        if (entityIds.Count == 0)
+        {
+            headerLabel.Text = "(no selection)";
+        }
+        else
+        {
+            var sample = string.Join(", ",
+                entityIds.Take(5).Select(g => g.ToString().Substring(0, 8)));
+            headerLabel.Text = $"{entityIds.Count} features selected (sample: {sample}{(entityIds.Count > 5 ? "..." : "")})";
+        }
+
+        fieldsLayout.SuspendLayout();
+        fieldsLayout.Controls.Clear();
+        _fieldControls.Clear();
+
+        var note = new Label
+        {
+            Text = "Phase D MVP: 複数件編集は AttributeEditorControl の対応外 (Phase D' で batch-update endpoint 追加予定)。",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ForeColor = System.Drawing.SystemColors.GrayText
+        };
+        fieldsLayout.Controls.Add(note);
+        fieldsLayout.ResumeLayout();
+
+        saveButton.Enabled = false;
+    }
+
     private const int LabelWidth = 110;
     private const int RowHeight = 28;
     private const int RowMargin = 4;

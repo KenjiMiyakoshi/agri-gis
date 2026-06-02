@@ -44,4 +44,12 @@ public interface IApiClient
     Task<ImportJobDto> GetImportJobAsync(Guid jobId, CancellationToken ct);
     Task<ImportJobDto> FinalizeImportJobAsync(Guid jobId, FinalizeImportJobRequestDto req, CancellationToken ct);
     Task<BulkFeaturesResponseDto> BulkInsertFeaturesAsync(int layerId, BulkFeaturesRequestDto req, CancellationToken ct);
+
+    // D401 (WD4): Phase D 新エンドポイント
+    Task<CreateSelectionResponseDto> CreateSelectionAsync(
+        IReadOnlyList<Guid> entityIds, string? colorHex, CancellationToken ct);
+    Task DeleteSelectionAsync(Guid sid, CancellationToken ct);
+    Task LogoutAsync(CancellationToken ct);
+    Task<LayerStyleDto> GetLayerStyleAsync(int layerId, CancellationToken ct);
+    Task<LayerStyleDto> UpdateLayerStyleAsync(int layerId, LayerStyleDto style, CancellationToken ct);
 }
