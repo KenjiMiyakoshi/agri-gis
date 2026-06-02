@@ -16,6 +16,10 @@ public partial class AttributeEditorControl : UserControl
     private FeatureDto? _feature;
     private readonly Dictionary<string, Control> _fieldControls = new();
     private bool _readOnly;
+    private IFeatureSaveCoordinator? _coordinator;
+
+    // WB4 B405 (H4 解消): MainForm 直接キャストを廃止し、コーディネータ経由で API 呼び出し
+    public void SetCoordinator(IFeatureSaveCoordinator coordinator) => _coordinator = coordinator;
 
     // A404: guest 等の閲覧専用ユーザは保存ボタンを無効化する
     public void SetReadOnly(bool readOnly)
@@ -149,14 +153,13 @@ public partial class AttributeEditorControl : UserControl
             saveButton.Enabled = false;
             errorLabel.Text = "Saving...";
 
-            var main = ParentForm as MainForm
-                       ?? throw new InvalidOperationException("AttributeEditor must be hosted in MainForm");
+            // WB4 B405 (H4 解消): MainForm 直接キャストの代わりに IFeatureSaveCoordinator 経由
+            var coord = _coordinator
+                       ?? throw new InvalidOperationException("IFeatureSaveCoordinator was not set");
 
             var entityId = Guid.Parse(_feature.Properties.EntityId);
             var req = new UpdateFeatureRequestDto(null, attrs);
-            // A403: actor は JWT の claims から API 側が決める。BearerHandler が
-            // Authorization ヘッダを自動付与するため、ここで actor を渡す必要はない。
-            var result = await main.Api.UpdateFeatureAsync(
+            var result = await coord.UpdateFeatureAsync(
                 entityId, req, _feature.Properties.Version, CancellationToken.None);
 
             errorLabel.Text = $"Saved. New version: {result.Version}";
@@ -164,7 +167,7 @@ public partial class AttributeEditorControl : UserControl
             Saved?.Invoke(this, _feature.Properties.LayerId);
 
             // 新 version で feature を取り直し
-            _feature = await main.Api.GetFeatureAsync(entityId, asOf: null, CancellationToken.None);
+            _feature = await coord.GetFeatureAsync(entityId, CancellationToken.None);
             headerLabel.Text = $"Entity {entityId} (v{_feature.Properties.Version})";
         }
         catch (ApiException apiEx) when (apiEx.Status == 409)

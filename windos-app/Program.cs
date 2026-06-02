@@ -35,6 +35,9 @@ internal static class Program
 
         services.AddTransient<MainForm>();
         services.AddTransient<LoginForm>();
+        // WB4 B406/B408
+        services.AddTransient<LayerAdminForm>();
+        services.AddTransient<ImportWizardForm>();
 
         using var sp = services.BuildServiceProvider();
 
