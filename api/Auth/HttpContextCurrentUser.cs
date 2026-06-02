@@ -56,4 +56,15 @@ public sealed class HttpContextCurrentUser : ICurrentUser
 
     public bool HasRole(string role) =>
         Principal?.IsInRole(role) ?? false;
+
+    // D103 (WD1): sid_session claim を Guid 化。欠落時は Guid.Empty。
+    // 既発行 (Phase A/B/C 期) token は claim を持たないため OnTokenValidated で弾かれる前提。
+    public Guid SessionId
+    {
+        get
+        {
+            var raw = Principal?.FindFirstValue("sid_session");
+            return Guid.TryParse(raw, out var g) ? g : Guid.Empty;
+        }
+    }
 }

@@ -1,0 +1,14 @@
+# GeoServer runtime artifacts (生成物)
+logs/
+gwc/
+gwc-layers/
+*.log
+*.pid
+
+# セキュリティクレデンシャル (本番運用時は別ホスト管理)
+security/
+
+# テンポラリ
+tmp/
+work/
+*.tmp

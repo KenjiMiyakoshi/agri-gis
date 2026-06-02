@@ -11,6 +11,11 @@ services:
     volumes:
       - postgis_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agri_user -d agri_gis"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   pgadmin:
     image: dpage/pgadmin4
@@ -22,6 +27,40 @@ services:
       - "8081:80"
     depends_on:
       - postgis
+
+  # D101 (WD1): GeoServer 同梱 (dev のみ、本番は別ホスト)。
+  # Phase D 描画アーキ転換のサーバラスタタイル本体。
+  # data_dir は git 管理 (./geoserver/data_dir) で workspace/datastore/layer 設定を共有。
+  geoserver:
+    image: kartoza/geoserver:2.25.0
+    container_name: agri_geoserver
+    environment:
+      GEOSERVER_DATA_DIR: /opt/geoserver/data_dir
+      GEOSERVER_ADMIN_USER: admin
+      GEOSERVER_ADMIN_PASSWORD: ${AGRI_GIS_GEOSERVER_ADMIN_PASSWORD:-geoserver_dev}
+      INITIAL_MEMORY: 1G
+      MAXIMUM_MEMORY: 2G
+      # PostGIS への接続 (kartoza image 仕様)
+      DB_BACKEND: POSTGRES
+      HOST: postgis
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: agri_gis
+      POSTGRES_USER: agri_user
+      POSTGRES_PASS: agri_pass
+      ENABLE_JSONP: "true"
+      DISABLE_WEB_INTERFACE: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./geoserver/data_dir:/opt/geoserver/data_dir
+    depends_on:
+      postgis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/geoserver/web/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
 
 volumes:
   postgis_data:

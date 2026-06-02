@@ -45,12 +45,19 @@ public sealed class JwtService
     public byte[] SecretBytes => _secret;
     public TimeSpan Ttl => _ttl;
 
+    // D103 (WD1): jti / sid_session を呼び出し側 (AuthEndpoints) で先に決めてから渡す。
+    // 理由は (1) AuthEndpoints が IUserSessionStore.CreateSessionAsync で session_id を払い出し、
+    // (2) その session_id を JWT 内 sid_session claim に詰める必要があるため。
+    // 既存 (Phase A/B/C) 呼び出し側は sid_session を持たないため、本シグネチャ変更で破壊される
+    // (= 全 caller を Phase D で更新)。
     public (string token, DateTime expiresAt) IssueAccessToken(
         Guid userId,
         string loginId,
         string displayName,
         int orgId,
-        IReadOnlyList<string> roles)
+        IReadOnlyList<string> roles,
+        Guid jti,
+        Guid sessionId)
     {
         var now = DateTime.UtcNow;
         var expires = now.Add(_ttl);
@@ -61,7 +68,8 @@ public sealed class JwtService
             new("login_id", loginId),
             new("display_name", displayName),
             new("org_id", orgId.ToString()),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Jti, jti.ToString()),
+            new("sid_session", sessionId.ToString()),
         };
         foreach (var r in roles)
         {

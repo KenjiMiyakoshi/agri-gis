@@ -27,7 +27,8 @@ public sealed class ApiClientFactory
             loginId: loginId,
             displayName: dn,
             orgId: SeedUsers.OrgId,
-            roles: new[] { role });
+            roles: new[] { role },
+            connectionString: _api.ConnectionString);  // D103: user_sessions INSERT 経路を有効化
         return this;
     }
 

@@ -14,6 +14,9 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         _connectionString = connectionString;
     }
 
+    // D103 (WD1) テスト用: TokenForge / WithActorAs が user_sessions に INSERT する際に使う
+    public string ConnectionString => _connectionString;
+
     // テスト全体で共有する JWT 署名鍵 (HS256, 32+ bytes)。A502 の TokenForge と共有。
     public const string TestJwtSecret = "agri-gis-test-jwt-secret-32bytes!!__min__";
     public const string TestJwtIssuer = "agri-gis-api";

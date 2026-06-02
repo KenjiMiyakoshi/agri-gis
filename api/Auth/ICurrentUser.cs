@@ -12,4 +12,8 @@ public interface ICurrentUser
     int OrgId { get; }
     IReadOnlyList<string> Roles { get; }
     bool HasRole(string role);
+
+    // D103 (WD1): JWT に詰めた sid_session claim から導出。
+    // user_sessions.session_id と紐付き、logout で deleted_at が埋まると次回 401。
+    Guid SessionId { get; }
 }
