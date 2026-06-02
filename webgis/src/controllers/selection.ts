@@ -2,7 +2,7 @@ import XYZ from 'ol/source/XYZ';
 import type { MapContext } from '../map/mapInit';
 import type { FeaturesSelectedPayload, SelectionOverlayReadyPayload, ThemeChangePayload } from '../bridge/messages';
 import { sendToHost, onMessage } from '../bridge/webviewBridge';
-import { createSelection, getCurrentAccessToken } from '../api/client';
+import { createSelection, getCurrentAccessToken, getFeaturesAt } from '../api/client';
 import { changeTheme } from './layer';
 
 // D302 (WD3): 選択 2 段パイプライン
@@ -16,11 +16,32 @@ import { changeTheme } from './layer';
 //     パイプライン形だけ書き、entity_id 取得は将来 Wave で精緻化する。
 
 export function wireSelection(ctx: MapContext): void {
+  // hotfix 3件目: singleclick → API /layers/{id}/at で近傍 feature の entity_id 取得
+  // → POST /api/selection で sid 発行 → selection overlay 表示
+  // → WinForms に features_selected envelope 通知 (属性表示は WinForms 側)
   ctx.map.on('singleclick', async (evt) => {
-    // 暫定: クリック座標 (EPSG:3857) を Host に通知する経路は廃止
-    // 代わりに、entity_id 取得を将来 Wave で WMS GetFeatureInfo に差し替える前提で、
-    // 現状は何も送らない (Phase D MVP)。
-    void evt;
+    if (ctx.currentLayerId === null) return;
+    const [x, y] = evt.coordinate;  // EPSG:3857
+    // 画面解像度に応じた tolerance (z=15 で約 100m、z=10 で約 3000m)
+    const resolution = ctx.view.getResolution() ?? 1;
+    const tolerance = resolution * 10;  // 10 pixel 相当
+    try {
+      const hit = await getFeaturesAt(ctx.currentLayerId, x, y, tolerance);
+      if (hit.hits.length === 0) return;
+      const entityIds = hit.hits.map((h) => h.entityId);
+      const sel = await createSelection({ entityIds });
+      setSelectionOverlay(ctx, sel.sid);
+      const fsel: FeaturesSelectedPayload = {
+        entityIds,
+        sid: sel.sid,
+        layerId: ctx.currentLayerId
+      };
+      sendToHost({ type: 'features_selected', payload: fsel });
+      const ready: SelectionOverlayReadyPayload = { sid: sel.sid, count: sel.count };
+      sendToHost({ type: 'selection_overlay_ready', payload: ready });
+    } catch (e) {
+      console.error('[selection] singleclick failed', e);
+    }
   });
 
   onMessage((msg) => {

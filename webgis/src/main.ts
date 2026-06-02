@@ -23,10 +23,10 @@ onMessage((msg) => {
     setAccessToken(p.accessToken);
   } else if (msg.type === 'layer_select') {
     const p = msg.payload as LayerSelectPayload;
-    loadFeatures(ctx, p.layerId, p.theme ?? 'default');
+    void loadFeatures(ctx, p.layerId, p.theme ?? 'default');
   } else if (msg.type === 'features_reload') {
     const p = msg.payload as FeaturesReloadPayload;
-    loadFeatures(ctx, p.layerId);
+    void loadFeatures(ctx, p.layerId);
   }
 });
 

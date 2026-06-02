@@ -154,16 +154,16 @@ public static class SelectionEndpoints
         // CQL_FILTER で entity_id IN (...) を組み立てる
         var cql = "entity_id IN (" + string.Join(",", entityIds.Select(e => $"'{e}'")) + ")";
 
-        // GeoServer に GetMap で selection 専用 SLD (selection_overlay) + CQL_FILTER 投げ
-        // (selection_overlay SLD は WD0/WD1 で data_dir/styles に配置、color_hex は ENV パラメタで渡す案)
+        // D202 hotfix: selection overlay も feature_current featureType で OK (entity_id IN で絞る)
+        // selection 専用 SLD は Phase D' で精緻化、現時点では t_default を流用 (見た目は本体と同色)
+        // 透過 PNG + CQL_FILTER で entity_id IN だけ描画されるので overlay として機能する
         var url = $"{opts.BaseUrl.TrimEnd('/')}/{opts.Workspace}/wms" +
                   $"?service=WMS&version=1.1.1&request=GetMap" +
-                  $"&layers={opts.Workspace}:selection_layer" +
-                  $"&styles={opts.Workspace}:selection_overlay" +
+                  $"&layers={opts.Workspace}:feature_current" +
+                  $"&styles={opts.Workspace}:t_default" +
                   $"&bbox={WebMercatorTileMath.FormatBboxArg(bbox.minX, bbox.minY, bbox.maxX, bbox.maxY)}" +
                   $"&width=256&height=256&srs=EPSG:3857&format=image/png&transparent=true" +
-                  $"&CQL_FILTER={Uri.EscapeDataString(cql)}" +
-                  $"&env=" + Uri.EscapeDataString($"highlight:{colorHex}");
+                  $"&CQL_FILTER={Uri.EscapeDataString(cql)}";
 
         var client = factory.CreateClient("geoserver");
         var authValue = Convert.ToBase64String(Encoding.UTF8.GetBytes(

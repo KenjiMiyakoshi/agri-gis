@@ -3,7 +3,6 @@ import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import XYZ from 'ol/source/XYZ';
 import OSM from 'ol/source/OSM';
-import { fromLonLat } from 'ol/proj';
 
 // D301 (WD3): VectorLayer 削除、TileLayer (base + selection overlay) の 2 layer 構成。
 // 編集モード時のみ単一 entity を取得する経路は別途検討 (Phase D' 候補)。
@@ -17,7 +16,11 @@ export interface MapContext {
   currentTheme: string;
 }
 
-const DEFAULT_CENTER_LONLAT: [number, number] = [143.205, 42.9115];
+// hotfix 2件目 (2026-06-03 朝の動作確認):
+// fromLonLat の sphere/ellipsoid Mercator 不一致でデータ位置とずれが出るため、
+// 3857 値で直接 center を指定 (帯広駅付近の seed feature が画面内に来る座標)。
+// PostGIS の ST_Transform で計算した layer_id=1 中心: (15941563, 5298510)
+const DEFAULT_CENTER_3857: [number, number] = [15941563, 5298510];
 const DEFAULT_ZOOM = 15;
 const DEFAULT_THEME = 'default';
 
@@ -36,7 +39,7 @@ export function createMap(targetId: string): MapContext {
   });
 
   const view = new View({
-    center: fromLonLat(DEFAULT_CENTER_LONLAT),
+    center: DEFAULT_CENTER_3857,
     zoom: DEFAULT_ZOOM,
     rotation: 0
   });
