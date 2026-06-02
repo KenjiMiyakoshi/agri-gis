@@ -1,26 +1,27 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using AgriGis.Desktop.Services.Import.Encoding;
+using AgriGis.Desktop.Services.Import.InferenceStrategies;
 using AgriGis.Desktop.Services.Import.Packages;
 using AgriGis.Desktop.Services.Import.Srid;
+using OSGeo.OGR;
 
 namespace AgriGis.Desktop.Services.Import;
 
-// WC1 C102: `ILayerSource` (Phase B 確立) を実装する Shapefile/MIF/TAB 用 LayerSource の骨格。
+// WC1 C102 / WC2 C302: ILayerSource (Phase B 確立) を実装する Shapefile/MIF/TAB 用 LayerSource。
 //
 // 設計判断 (PHASE_C_DESIGN_P §3 / §6):
 //   - sourceFormat ctor 引数で driver 名を切替 (Phase C は "shapefile" のみ、
 //     Phase C' で "MapInfo File" を渡せば MIF/TAB に再利用可能)
-//   - 1 クラスに集約 (案 C 採用、Phase C' でも分割しない)
-//   - 文字コードは IEncodingResolver で解決 → Ogr.Open(path, new[]{"ENCODING=..."}) で渡す
+//   - 1 クラスに集約 (案 C 採用)
+//   - 文字コードは IEncodingResolver で解決 → Ogr.OpenEx(path, ..., new[]{"ENCODING=..."}) で渡す
 //     (環境変数 SHAPE_ENCODING 不使用、Design 決定 6)
-//   - SRID 検出は ISridDetector に委譲、結果は SourceSrid プロパティと SridResolutionState に反映
+//   - SRID 検出は ISridDetector に委譲、結果は SourceSrid / SridState に反映
 //   - DisposeAsync で OGR DataSource → ShapefilePackage の連鎖解放
-//
-// 本ファイルは骨格のみ。実装の所在:
-//   - InferSchemaAsync: C301 GdalInferenceStrategy (OFT → InferredField 写像)
-//   - ReadFeaturesAsync: C302 OGR Geometry → GeoJSON 変換 + Multi 正規化
-//
-// internal static 純粋関数 (絶対パス組み立て等) は InternalsVisibleTo("AgriGis.Desktop.Tests")
-// で test から assertion 対象になる予定 (C501)。
+//   - WC2 C302: ReadFeaturesAsync は Geometry.ExportToJson() 経由で GeoJSON 化、
+//     Polygon/LineString は Multi 正規化 (案 P §6.5)、Z/M 値は X/Y のみで skip + WARN、
+//     IAsyncEnumerable で逐次 yield
 public sealed class GdalLayerSource : ILayerSource
 {
     private readonly ShapefilePackage _package;
@@ -28,13 +29,16 @@ public sealed class GdalLayerSource : ILayerSource
     private readonly IEncodingResolver _encodingResolver;
     private readonly string _sourceFormat;
 
-    // OGR DataSource は ReadFeaturesAsync / InferSchemaAsync で開かれる (C301/C302 で実装)。
-    // SRID 検出も最初の使用時に走らせるため _detectedSrid は遅延初期化。
-    // CS0649 抑制: C301/C302 で代入される予定。
-#pragma warning disable CS0649
+    private DataSource? _dataSource;
     private int? _detectedSrid;
     private SridResolutionState? _sridState;
-#pragma warning restore CS0649
+
+    private readonly List<string> _warnings = new();
+    /// <summary>OGR 読み込み中の警告 (Z/M drop / feature skip 等)。</summary>
+    public IReadOnlyList<string> Warnings => _warnings;
+
+    /// <summary>読み込み中に skip された feature 数 (案 P §6.14 論点 13)。</summary>
+    public int SkippedFeatureCount { get; private set; }
 
     public GdalLayerSource(
         ShapefilePackage package,
@@ -50,43 +54,222 @@ public sealed class GdalLayerSource : ILayerSource
 
     public string SourceFormat => _sourceFormat;
 
-    /// <summary>
-    /// 直近の SRID 検出結果。InferSchemaAsync / ReadFeaturesAsync 呼び出し前は null。
-    /// `FallbackToWgs84` 採用時は 4326、`Rejected` / `FallbackToPrompt` 採用時は null。
-    /// </summary>
     public int? SourceSrid => _detectedSrid;
 
-    /// <summary>
-    /// 直近の SRID 検出状態。ViewModel が `Next` 制御や `meta_jsonb.srid_inferred` 判定に使う。
-    /// </summary>
     public SridResolutionState? SridState => _sridState;
 
-    public Task<IReadOnlyList<InferredField>> InferSchemaAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<InferredField>> InferSchemaAsync(CancellationToken ct)
     {
-        // 実装: C301 GdalInferenceStrategy.InferAsync(...) を呼ぶ。
-        // OFT → InferredField 写像 + 100 feature サンプリングで nullable / date 再推定。
-        throw new NotImplementedException("Implemented in WC2 C301 (GdalInferenceStrategy)");
+        await EnsureOpenAsync(ct);
+        var layer = _dataSource!.GetLayerByIndex(0);
+        return GdalInferenceStrategy.Infer(layer, _warnings);
     }
 
-    public IAsyncEnumerable<GeoJsonFeature> ReadFeaturesAsync(int targetSrid, CancellationToken ct)
+    public async IAsyncEnumerable<GeoJsonFeature> ReadFeaturesAsync(
+        int targetSrid,
+        [EnumeratorCancellation] CancellationToken ct)
     {
-        // 実装: C302 で OGR Geometry → GeoJSON 変換 + MultiPolygon/MultiLineString 固定 +
-        //       Z/M 値 skip + WARN + IAsyncEnumerable で逐次 yield。
-        // 呼び出し前に ISridDetector.DetectAsync で _detectedSrid / _sridState を確定する。
-        throw new NotImplementedException("Implemented in WC2 C302 (Geometry → GeoJSON)");
+        if (targetSrid != 4326)
+        {
+            throw new NotSupportedException(
+                $"GdalLayerSource: only 4326 target is supported, got {targetSrid}.");
+        }
+
+        await EnsureOpenAsync(ct);
+        var layer = _dataSource!.GetLayerByIndex(0);
+        var defn = layer.GetLayerDefn();
+        var fieldCount = defn.GetFieldCount();
+        var fieldNames = new string[fieldCount];
+        for (int i = 0; i < fieldCount; i++)
+        {
+            fieldNames[i] = defn.GetFieldDefn(i).GetName();
+        }
+
+        layer.ResetReading();
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            Feature? feat;
+            try
+            {
+                feat = layer.GetNextFeature();
+            }
+            catch (Exception ex)
+            {
+                _warnings.Add($"GetNextFeature failed; skipping: {ex.Message}");
+                SkippedFeatureCount++;
+                continue;
+            }
+            if (feat is null) break;
+
+            GeoJsonFeature? converted;
+            try
+            {
+                converted = ConvertFeature(feat, fieldNames);
+            }
+            catch (Exception ex)
+            {
+                _warnings.Add($"Feature {feat.GetFID()} skipped: {ex.Message}");
+                SkippedFeatureCount++;
+                feat.Dispose();
+                continue;
+            }
+            feat.Dispose();
+
+            if (converted is not null)
+            {
+                yield return converted;
+            }
+        }
+    }
+
+    private GeoJsonFeature? ConvertFeature(Feature feat, string[] fieldNames)
+    {
+        using var geom = feat.GetGeometryRef();
+        if (geom is null) return null;
+
+        // Z/M 値 drop (Design P §6.5 論点 13)
+        if (geom.GetCoordinateDimension() > 2)
+        {
+            _warnings.Add($"Z/M values dropped at feature {feat.GetFID()}");
+            geom.FlattenTo2D();
+        }
+
+        // MultiPolygon / MultiLineString 正規化 (案 C 採用、§6.5 論点 8)
+        var promoted = PromoteToMulti(geom);
+        var disposePromoted = !ReferenceEquals(promoted, geom);
+
+        string geomJson;
+        try
+        {
+            geomJson = promoted.ExportToJson(Array.Empty<string>());
+        }
+        finally
+        {
+            if (disposePromoted) promoted.Dispose();
+        }
+
+        using var geomDoc = JsonDocument.Parse(geomJson);
+        var geometry = geomDoc.RootElement.Clone();
+
+        var props = new Dictionary<string, JsonElement>(fieldNames.Length);
+        for (int i = 0; i < fieldNames.Length; i++)
+        {
+            var name = fieldNames[i];
+            var idx = feat.GetFieldIndex(name);
+            if (idx < 0) continue;
+            if (!feat.IsFieldSet(idx) || feat.IsFieldNull(idx))
+            {
+                using var nullDoc = JsonDocument.Parse("null");
+                props[name] = nullDoc.RootElement.Clone();
+                continue;
+            }
+            var s = feat.GetFieldAsString(idx);
+            using var pdoc = JsonDocument.Parse(JsonSerializer.Serialize(s));
+            props[name] = pdoc.RootElement.Clone();
+        }
+
+        return new GeoJsonFeature(geometry, props);
+    }
+
+    /// <summary>
+    /// Polygon → MultiPolygon (1 リング)、LineString → MultiLineString (1 ライン) に昇格。
+    /// Point/MultiPoint/既に Multi のものはそのまま返す。
+    /// </summary>
+    internal static Geometry PromoteToMulti(Geometry input)
+    {
+        var t = input.GetGeometryType();
+        switch (t)
+        {
+            case wkbGeometryType.wkbPolygon:
+            case wkbGeometryType.wkbPolygon25D:
+            {
+                var mp = new Geometry(wkbGeometryType.wkbMultiPolygon);
+                mp.AddGeometry(input);
+                return mp;
+            }
+            case wkbGeometryType.wkbLineString:
+            case wkbGeometryType.wkbLineString25D:
+            {
+                var ml = new Geometry(wkbGeometryType.wkbMultiLineString);
+                ml.AddGeometry(input);
+                return ml;
+            }
+            default:
+                return input;
+        }
+    }
+
+    private ValueTask EnsureOpenAsync(CancellationToken ct)
+    {
+        if (_dataSource is not null) return ValueTask.CompletedTask;
+        return EnsureOpenInternalAsync(ct);
+    }
+
+    private async ValueTask EnsureOpenInternalAsync(CancellationToken ct)
+    {
+        // 1. SRID 検出
+        var sridResult = await _sridDetector.DetectAsync(_package, ct);
+        _detectedSrid = sridResult.Srid;
+        _sridState = sridResult.State;
+
+        if (sridResult.State == SridResolutionState.Rejected)
+        {
+            throw new InvalidOperationException(
+                ".prj 不在または SRID 検出失敗 (SridFallbackPolicy=Reject)");
+        }
+
+        // 2. 文字コード解決 → .cpg fallback 書き込み (OGR が .cpg を自動検出するため、
+        //    .cpg が無いケースでは temp dir に .cpg を生成する。これで
+        //    プロセス環境変数 SHAPE_ENCODING を使わずにエンコーディングを指定できる
+        //    Design 決定 6 と整合)
+        var encoding = _encodingResolver.Resolve(_package);
+        if (string.IsNullOrEmpty(_package.CpgPath))
+        {
+            var generated = Path.ChangeExtension(_package.ShpPath, ".cpg");
+            await File.WriteAllTextAsync(generated, encoding, ct);
+        }
+
+        // 3. OGR Open (driver 名で限定して開く)
+        var driverName = _sourceFormat switch
+        {
+            "shapefile" => "ESRI Shapefile",
+            "mif" or "tab" => "MapInfo File",
+            _ => throw new NotSupportedException($"Unsupported source format: {_sourceFormat}")
+        };
+        var driver = Ogr.GetDriverByName(driverName);
+        if (driver is null)
+            throw new InvalidOperationException($"OGR driver not found: {driverName}");
+
+        _dataSource = driver.Open(_package.ShpPath, 0);  // 0 = read-only
+
+        if (_dataSource is null)
+        {
+            throw new InvalidOperationException(
+                $"Failed to open shapefile: {_package.ShpPath} (encoding={encoding})");
+        }
+
+        if (_package.MissingOptionalExtensions.Count > 0)
+        {
+            Trace.WriteLine(
+                $"[GdalLayerSource] missing optional sidecars: {string.Join(',', _package.MissingOptionalExtensions)}");
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
-        // C301/C302 実装後はここで OGR DataSource を Dispose する。
-        // 現時点では ShapefilePackage の連鎖解放のみ。
+        _dataSource?.Dispose();
+        _dataSource = null;
         await _package.DisposeAsync();
     }
 
     // ----- internal static 純粋関数群 (C501 のテスト対象) -----
 
     /// <summary>
-    /// OGR Open option 形式の文字列を組み立てる (`ENCODING=CP932` 等)。
+    /// OGR Open option 形式の文字列配列を組み立てる (`ENCODING=CP932` 等)。
+    /// 現在は .cpg fallback 経路を採用しているため Ogr.Open 呼び出しでは未使用だが、
+    /// 将来 Gdal.OpenEx を採用する経路への切替候補として残置 (テストは継続)。
     /// </summary>
     internal static string[] BuildOpenOptions(string encoding)
     {
