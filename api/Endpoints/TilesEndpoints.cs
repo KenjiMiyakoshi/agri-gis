@@ -49,13 +49,18 @@ public static class TilesEndpoints
             }
 
             // GeoServer WMS GetMap URL 構築
+            // D201 hotfix (Phase D 朝の動作確認): featureType は単一 (feature_current) で公開し、
+            // layer_id は CQL_FILTER で絞る形に変更。各 layer ごとに GeoServer に featureType を
+            // 増やさずに済むため運用が楽。
             var opts = geoOpts.Value;
+            var cqlFilter = Uri.EscapeDataString($"layer_id={layerId}");
             var url = $"{opts.BaseUrl.TrimEnd('/')}/{opts.Workspace}/wms" +
                       $"?service=WMS&version=1.1.1&request=GetMap" +
-                      $"&layers={opts.Workspace}:l_{layerId}" +
+                      $"&layers={opts.Workspace}:feature_current" +
                       $"&styles={opts.Workspace}:t_{theme}" +
                       $"&bbox={WebMercatorTileMath.FormatBboxArg(bbox.minX, bbox.minY, bbox.maxX, bbox.maxY)}" +
-                      $"&width=256&height=256&srs=EPSG:3857&format=image/png&transparent=true";
+                      $"&width=256&height=256&srs=EPSG:3857&format=image/png&transparent=true" +
+                      $"&CQL_FILTER={cqlFilter}";
 
             // basic auth で GeoServer に proxy
             var client = httpClientFactory.CreateClient("geoserver");

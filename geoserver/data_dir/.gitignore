@@ -1,14 +1,11 @@
-# GeoServer runtime artifacts (生成物)
-logs/
-gwc/
-gwc-layers/
-*.log
-*.pid
+# Phase D dev: GeoServer data_dir は kartoza image が自動生成 + tools/geoserver-setup/setup.ps1 で構築される。
+# 新環境を立ち上げる場合は docker compose up -d geoserver の後 setup.ps1 を実行すれば全構成が再生成される。
+# git には README + .gitkeep のみ管理し、実 data_dir 内容は ignore。
 
-# セキュリティクレデンシャル (本番運用時は別ホスト管理)
-security/
-
-# テンポラリ
-tmp/
-work/
-*.tmp
+*
+!.gitignore
+!README.md
+!styles/
+!styles/.gitkeep
+!workspaces/
+!workspaces/.gitkeep

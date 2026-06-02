@@ -7,6 +7,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5080',
         changeOrigin: true
+      },
+      // D301 (WD3): Phase D サーバラスタタイル経路
+      '/tiles': {
+        target: 'http://localhost:5080',
+        changeOrigin: true
       }
     }
   }
