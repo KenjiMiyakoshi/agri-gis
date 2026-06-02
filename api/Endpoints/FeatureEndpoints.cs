@@ -15,8 +15,16 @@ public static class FeatureEndpoints
     public static RouteGroupBuilder MapFeatureEndpoints(this RouteGroupBuilder group)
     {
         // 0208: GET /api/features?layerId=&asOf=YYYY-MM-DD
-        group.MapGet("/", async (int layerId, string? asOf, NpgsqlDataSource db) =>
+        // D205 (WD2): Phase D 採用案 P §2.2 — WD3 完了時点で 410 Gone 化する予定。
+        // 本 endpoint は Phase D 移行期間中のみ動作し、Sunset / Deprecation ヘッダで
+        // クライアントに移行催促 (WebGIS 側 D303 で完全廃止)。
+        group.MapGet("/", async (int layerId, string? asOf, NpgsqlDataSource db, HttpContext httpContext) =>
         {
+            // RFC 8594 Sunset + draft Deprecation ヘッダ
+            httpContext.Response.Headers["Sunset"] = "Sat, 30 Aug 2026 00:00:00 GMT";
+            httpContext.Response.Headers["Deprecation"] = "true";
+            httpContext.Response.Headers["Link"] =
+                "</tiles/{layerId}/{theme}/{z}/{x}/{y}.png>; rel=\"successor-version\"";
             var asOfDate = ParseAsOf(asOf);
 
             // WB2 B205: layers.deleted_at IS NULL のレイヤ feature のみ返却

@@ -50,17 +50,8 @@ public sealed class ApiClient : IApiClient
         return (await res.Content.ReadFromJsonAsync<LayerSchemaResponseDto>(JsonOpts, ct))!;
     }
 
-    public async Task<FeatureCollectionDto> GetFeaturesAsync(int layerId, DateOnly? asOf, CancellationToken ct)
-    {
-        var url = $"/api/features?layerId={layerId}";
-        if (asOf is { } d)
-        {
-            url += $"&asOf={d:yyyy-MM-dd}";
-        }
-        using var res = await _http.GetAsync(url, ct);
-        await EnsureSuccessAsync(res, ct);
-        return (await res.Content.ReadFromJsonAsync<FeatureCollectionDto>(JsonOpts, ct))!;
-    }
+    // D205 (WD2): GetFeaturesAsync は Phase D で削除済 (IApiClient interface からも除去)。
+    // 全件 GeoJSON 取得経路は Phase D で TileLayer に切替、WebGIS 側 D303 で API も 410 化予定。
 
     public async Task<FeatureDto> GetFeatureAsync(Guid entityId, DateOnly? asOf, CancellationToken ct)
     {

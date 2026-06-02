@@ -10,10 +10,9 @@ public interface IApiClient
 
     Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, CancellationToken ct);
 
-    Task<FeatureCollectionDto> GetFeaturesAsync(
-        int layerId,
-        DateOnly? asOf,
-        CancellationToken ct);
+    // D205 (WD2): GetFeaturesAsync は Phase D で削除。
+    // Phase A/B/C 期に追加された全件 GeoJSON 取得経路は Phase D で TileLayer に切替。
+    // 編集モード時は GetFeatureAsync (単一 entity) のみ使用。
 
     Task<FeatureDto> GetFeatureAsync(
         Guid entityId,

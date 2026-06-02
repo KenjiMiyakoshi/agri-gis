@@ -123,6 +123,33 @@ public static class AuthEndpoints
             return Results.NoContent();
         }).RequireAuthorization();
 
+        // D204 (WD2): POST /api/auth/logout (要認証)
+        // user_sessions.deleted_at = now() で session 失効
+        // → 関連する selection_sets は FK CASCADE (0D04) で自動削除
+        // 二重 logout は冪等 (InvalidateSessionAsync が deleted_at IS NULL 条件付き UPDATE)
+        group.MapPost("/logout", async (ICurrentUser user,
+                                        IUserSessionStore sessionStore,
+                                        NpgsqlDataSource db,
+                                        CancellationToken ct) =>
+        {
+            if (user.SessionId == Guid.Empty)
+            {
+                // sid_session claim 欠落 token は OnTokenValidated で弾かれているはずだが、
+                // 防御的に 204 を返す
+                return Results.NoContent();
+            }
+            await sessionStore.InvalidateSessionAsync(user.SessionId, ct);
+
+            // 関連 selection_sets を明示的に削除 (FK CASCADE と二重だが、
+            // user_sessions レコード自体は物理削除しないため CASCADE が発火しない)
+            await using var cmd = db.CreateCommand(
+                "DELETE FROM selection_sets WHERE session_id = @s");
+            cmd.Parameters.AddWithValue("s", user.SessionId);
+            await cmd.ExecuteNonQueryAsync(ct);
+
+            return Results.NoContent();
+        }).RequireAuthorization();
+
         return group;
     }
 }
