@@ -87,6 +87,33 @@ export async function getLayers(): Promise<LayerDto[]> {
   return handle<LayerDto[]>(await authFetch(`${BASE}/layers`));
 }
 
+// hotfix 2件目: layer 選択時に view.fit するための extent
+export interface LayerExtentDto {
+  layerId: number;
+  count: number;
+  extent3857: [number, number, number, number] | null;
+}
+
+export async function getLayerExtent(layerId: number): Promise<LayerExtentDto> {
+  return handle<LayerExtentDto>(await authFetch(`${BASE}/layers/${layerId}/extent`));
+}
+
+// hotfix 3件目: クリック位置の近傍 feature 取得 (EPSG:3857 座標, tolerance メートル)
+export interface FeatureAtHit {
+  entityId: string;
+  distance: number;
+}
+export interface FeatureAtResponse {
+  layerId: number;
+  hits: FeatureAtHit[];
+}
+
+export async function getFeaturesAt(layerId: number, x: number, y: number, tolerance?: number): Promise<FeatureAtResponse> {
+  const params = new URLSearchParams({ x: String(x), y: String(y) });
+  if (tolerance !== undefined) params.set('tolerance', String(tolerance));
+  return handle<FeatureAtResponse>(await authFetch(`${BASE}/layers/${layerId}/at?${params.toString()}`));
+}
+
 export async function getLayerSchema(layerId: number): Promise<LayerSchemaResponseDto> {
   return handle<LayerSchemaResponseDto>(await authFetch(`${BASE}/layers/${layerId}/schema`));
 }

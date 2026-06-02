@@ -1,6 +1,6 @@
 import XYZ from 'ol/source/XYZ';
 import type { MapContext } from '../map/mapInit';
-import { fetchLayers, getCurrentAccessToken } from '../api/client';
+import { fetchLayers, getCurrentAccessToken, getLayerExtent } from '../api/client';
 
 // D301 (WD3): VectorLayer 経路を廃止し TileLayer(XYZ) で /tiles/{layerId}/{theme}/{z}/{x}/{y}.png を参照
 // tileLoadFunction で Authorization: Bearer {jwt} を付与する。jwt は api/client.ts setAccessToken で更新される。
@@ -45,9 +45,18 @@ export function changeTheme(ctx: MapContext, theme: string): void {
   setBaseLayerSource(ctx, ctx.currentLayerId, theme);
 }
 
-// loadFeatures は名前を残しつつ意味を「layer/theme 差替」に縮退
-export function loadFeatures(ctx: MapContext, layerId: number, theme: string = 'default'): void {
+// loadFeatures は名前を残しつつ意味を「layer/theme 差替 + extent fit」に拡張
+// hotfix 2件目: layer 選択時に extent を取得して view.fit で自動 zoom
+export async function loadFeatures(ctx: MapContext, layerId: number, theme: string = 'default'): Promise<void> {
   setBaseLayerSource(ctx, layerId, theme);
+  try {
+    const ext = await getLayerExtent(layerId);
+    if (ext.extent3857 && ext.count > 0) {
+      ctx.view.fit(ext.extent3857, { padding: [40, 40, 40, 40], maxZoom: 18 });
+    }
+  } catch (e) {
+    console.error('[layer] fit extent failed', e);
+  }
 }
 
 export async function wireLayerSelect(ctx: MapContext): Promise<void> {
@@ -64,11 +73,11 @@ export async function wireLayerSelect(ctx: MapContext): Promise<void> {
       select.appendChild(opt);
     }
     select.addEventListener('change', () => {
-      loadFeatures(ctx, Number(select.value), ctx.currentTheme);
+      void loadFeatures(ctx, Number(select.value), ctx.currentTheme);
     });
     if (layers.length > 0) {
       select.value = String(layers[0].layerId);
-      loadFeatures(ctx, layers[0].layerId, ctx.currentTheme);
+      void loadFeatures(ctx, layers[0].layerId, ctx.currentTheme);
     }
   } catch (e) {
     console.error('wireLayerSelect', e);
