@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
+using AgriGis.Api.Json;
 using Npgsql;
 
 namespace AgriGis.Api.Endpoints;
@@ -26,7 +27,7 @@ public static class LayerEndpoints
             {
                 var createdAt = DateTime.SpecifyKind(r.GetDateTime(5), DateTimeKind.Utc);
                 var schemaJson = r.GetString(7);
-                var schema = JsonSerializer.Deserialize<LayerSchemaDto>(schemaJson, JsonOpts.Options)
+                var schema = JsonSerializer.Deserialize<LayerSchemaDto>(schemaJson, JsonOpts.Default)
                              ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>());
 
                 rows.Add(new LayerDto(
@@ -61,7 +62,7 @@ public static class LayerEndpoints
             }
 
             var schemaJson = r.GetString(1);
-            var schema = JsonSerializer.Deserialize<LayerSchemaDto>(schemaJson, JsonOpts.Options)
+            var schema = JsonSerializer.Deserialize<LayerSchemaDto>(schemaJson, JsonOpts.Default)
                          ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>());
 
             return Results.Ok(new LayerSchemaResponseDto(layerId, r.GetInt32(0), schema));
