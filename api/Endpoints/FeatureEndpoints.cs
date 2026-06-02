@@ -14,62 +14,20 @@ public static class FeatureEndpoints
 
     public static RouteGroupBuilder MapFeatureEndpoints(this RouteGroupBuilder group)
     {
-        // 0208: GET /api/features?layerId=&asOf=YYYY-MM-DD
-        // D205 (WD2): Phase D 採用案 P §2.2 — WD3 完了時点で 410 Gone 化する予定。
-        // 本 endpoint は Phase D 移行期間中のみ動作し、Sunset / Deprecation ヘッダで
-        // クライアントに移行催促 (WebGIS 側 D303 で完全廃止)。
-        group.MapGet("/", async (int layerId, string? asOf, NpgsqlDataSource db, HttpContext httpContext) =>
+        // 0208 + D205 (WD2) + D303 (WD3): GET /api/features?layerId= は **410 Gone**。
+        // Phase D 採用案 P §2.2: WD3 完了時点で完全廃止。
+        // 後継は `/tiles/{layerId}/{theme}/{z}/{x}/{y}.png` (D201)。
+        // 単一 entity 取得は `/api/features/{entityId}` (既存) を継続。
+        group.MapGet("/", (HttpContext httpContext) =>
         {
-            // RFC 8594 Sunset + draft Deprecation ヘッダ
-            httpContext.Response.Headers["Sunset"] = "Sat, 30 Aug 2026 00:00:00 GMT";
-            httpContext.Response.Headers["Deprecation"] = "true";
             httpContext.Response.Headers["Link"] =
                 "</tiles/{layerId}/{theme}/{z}/{x}/{y}.png>; rel=\"successor-version\"";
-            var asOfDate = ParseAsOf(asOf);
-
-            // WB2 B205: layers.deleted_at IS NULL のレイヤ feature のみ返却
-            string sql = asOfDate is null
-                ? @"SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
-                           attributes_schema_version, created_by, updated_by, created_at, updated_at,
-                           attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_current fc
-                     WHERE fc.layer_id = @id AND fc.geom IS NOT NULL
-                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)"
-                : @"SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
-                           attributes_schema_version, created_by, updated_by, created_at, updated_at,
-                           attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_current fc
-                     WHERE fc.layer_id = @id AND fc.geom IS NOT NULL
-                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)
-                       AND valid_from <= @asof AND @asof < valid_to
-                    UNION ALL
-                    SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
-                           attributes_schema_version, created_by, updated_by, created_at, updated_at,
-                           attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_history fh
-                     WHERE fh.layer_id = @id AND fh.geom IS NOT NULL
-                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.deleted_at IS NULL)
-                       AND valid_from <= @asof AND @asof < valid_to";
-
-            await using var cmd = db.CreateCommand(sql);
-            cmd.Parameters.AddWithValue("id", layerId);
-            if (asOfDate is not null)
-            {
-                cmd.Parameters.AddWithValue("asof", asOfDate.Value);
-            }
-
-            await using var r = await cmd.ExecuteReaderAsync();
-            var features = new List<FeatureDto>();
-            while (await r.ReadAsync())
-            {
-                features.Add(MapFeatureDto(r));
-            }
-
-            var fc = new FeatureCollectionDto(
-                "FeatureCollection",
-                new CrsDto("name", new CrsPropertiesDto("EPSG:4326")),
-                features);
-            return Results.Ok(fc);
+            return Results.Problem(
+                type: "https://docs.agri-gis/errors/endpoint-gone",
+                title: "GET /api/features?layerId= is permanently gone (Phase D)",
+                detail: "Replaced by GET /tiles/{layerId}/{theme}/{z}/{x}/{y}.png. " +
+                        "For single entity access use GET /api/features/{entityId}.",
+                statusCode: 410);
         });
 
         // 0209: GET /api/features/{entityId}?asOf=YYYY-MM-DD

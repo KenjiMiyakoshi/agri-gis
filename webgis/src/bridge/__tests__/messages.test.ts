@@ -1,24 +1,51 @@
 import { describe, it, expect } from 'vitest';
 import type {
   Envelope,
-  FeatureClickedPayload,
-  LayerSelectPayload
+  FeaturesSelectedPayload,
+  LayerSelectPayload,
+  ThemeChangePayload,
+  SelectionOverlayReadyPayload
 } from '../messages';
 
 describe('Envelope JSON round-trip', () => {
-  it('serializes and parses a feature_clicked envelope', () => {
-    const original: Envelope<FeatureClickedPayload> = {
-      type: 'feature_clicked',
-      payload: { entityId: 'abc', layerId: 1, featureId: 99 },
+  it('serializes and parses a features_selected envelope (D303)', () => {
+    const original: Envelope<FeaturesSelectedPayload> = {
+      type: 'features_selected',
+      payload: {
+        entityIds: ['abc', 'def'],
+        sid: '11111111-2222-3333-4444-555555555555',
+        layerId: 1
+      },
       requestId: 'rid-1'
     };
     const wire = JSON.stringify(original);
-    const back = JSON.parse(wire) as Envelope<FeatureClickedPayload>;
-    expect(back.type).toBe('feature_clicked');
-    expect(back.payload.entityId).toBe('abc');
+    const back = JSON.parse(wire) as Envelope<FeaturesSelectedPayload>;
+    expect(back.type).toBe('features_selected');
+    expect(back.payload.entityIds).toEqual(['abc', 'def']);
+    expect(back.payload.sid).toBe('11111111-2222-3333-4444-555555555555');
     expect(back.payload.layerId).toBe(1);
-    expect(back.payload.featureId).toBe(99);
     expect(back.requestId).toBe('rid-1');
+  });
+
+  it('serializes a theme_change envelope (D303)', () => {
+    const original: Envelope<ThemeChangePayload> = {
+      type: 'theme_change',
+      payload: { layerId: 2, theme: 'byOwner' }
+    };
+    const wire = JSON.stringify(original);
+    expect(wire).toContain('"theme":"byOwner"');
+    const back = JSON.parse(wire) as Envelope<ThemeChangePayload>;
+    expect(back.payload.theme).toBe('byOwner');
+  });
+
+  it('serializes a selection_overlay_ready envelope (D303)', () => {
+    const original: Envelope<SelectionOverlayReadyPayload> = {
+      type: 'selection_overlay_ready',
+      payload: { sid: 'sid-uuid', count: 42 }
+    };
+    const wire = JSON.stringify(original);
+    const back = JSON.parse(wire) as Envelope<SelectionOverlayReadyPayload>;
+    expect(back.payload.count).toBe(42);
   });
 
   it('survives omitted requestId', () => {
@@ -33,14 +60,16 @@ describe('Envelope JSON round-trip', () => {
     expect(back.requestId).toBeUndefined();
   });
 
-  it('serializes optional fields (asOf) when present', () => {
+  it('serializes optional fields (theme, asOf) when present (D303)', () => {
     const original: Envelope<LayerSelectPayload> = {
       type: 'layer_select',
-      payload: { layerId: 1, asOf: '2026-05-29' }
+      payload: { layerId: 1, theme: 'default', asOf: '2026-05-29' }
     };
     const wire = JSON.stringify(original);
     expect(wire).toContain('"asOf":"2026-05-29"');
+    expect(wire).toContain('"theme":"default"');
     const back = JSON.parse(wire) as Envelope<LayerSelectPayload>;
     expect(back.payload.asOf).toBe('2026-05-29');
+    expect(back.payload.theme).toBe('default');
   });
 });
