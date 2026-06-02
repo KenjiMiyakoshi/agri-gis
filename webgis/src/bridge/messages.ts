@@ -2,7 +2,7 @@
 // envelope: { type, payload, requestId? }
 
 export type WebToHostType = 'feature_clicked' | 'map_ready';
-export type HostToWebType = 'layer_select' | 'features_reload' | 'feature_highlight';
+export type HostToWebType = 'layer_select' | 'features_reload' | 'feature_highlight' | 'auth_token';
 export type MessageType = WebToHostType | HostToWebType;
 
 export interface Envelope<P = unknown> {
@@ -36,6 +36,11 @@ export interface FeaturesReloadPayload {
 
 export interface FeatureHighlightPayload {
   entityId: string;
+}
+
+// WinForms (ホスト) から API 呼び出し用の JWT を引き渡す (Phase A 動作確認用)
+export interface AuthTokenPayload {
+  accessToken: string;
 }
 
 // 将来追加予定: feature_edit_geometry / view_set_rotation など

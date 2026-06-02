@@ -3,16 +3,24 @@ import { loadFeatures, wireLayerSelect } from './controllers/layer';
 import { wireRotation } from './controllers/rotation';
 import { wireSelection } from './controllers/selection';
 import { onMessage, sendToHost } from './bridge/webviewBridge';
-import type { FeaturesReloadPayload, LayerSelectPayload } from './bridge/messages';
+import type {
+  AuthTokenPayload,
+  FeaturesReloadPayload,
+  LayerSelectPayload
+} from './bridge/messages';
+import { setAccessToken } from './api/client';
 
 const ctx = createMap('map');
 wireRotation(ctx);
 wireSelection(ctx);
 void wireLayerSelect(ctx);
 
-// Host → Web: layer_select / features_reload を受けてレイヤを再ロード
+// Host → Web: auth_token / layer_select / features_reload を受ける
 onMessage((msg) => {
-  if (msg.type === 'layer_select') {
+  if (msg.type === 'auth_token') {
+    const p = msg.payload as AuthTokenPayload;
+    setAccessToken(p.accessToken);
+  } else if (msg.type === 'layer_select') {
     const p = msg.payload as LayerSelectPayload;
     void loadFeatures(ctx, p.layerId);
   } else if (msg.type === 'features_reload') {
