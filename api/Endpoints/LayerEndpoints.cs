@@ -11,12 +11,14 @@ public static class LayerEndpoints
     public static RouteGroupBuilder MapLayerEndpoints(this RouteGroupBuilder group)
     {
         // 0205: GET /api/layers — schema_json と schema_version を含めて全レイヤを返す
+        // Phase B: deleted_at IS NULL のレイヤのみ (B205 漏れ修正)
         group.MapGet("/", async (NpgsqlDataSource db) =>
         {
             const string sql = @"
                 SELECT layer_id, layer_name, layer_type, owner_org_id, is_shared, created_at,
                        schema_version, schema_json
                 FROM layers
+                WHERE deleted_at IS NULL
                 ORDER BY layer_id";
 
             await using var cmd = db.CreateCommand(sql);
@@ -50,7 +52,7 @@ public static class LayerEndpoints
             const string sql = @"
                 SELECT schema_version, schema_json
                 FROM layers
-                WHERE layer_id = @id";
+                WHERE layer_id = @id AND deleted_at IS NULL";
 
             await using var cmd = db.CreateCommand(sql);
             cmd.Parameters.AddWithValue("id", layerId);

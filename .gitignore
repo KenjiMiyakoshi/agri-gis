@@ -1,0 +1,16 @@
+# ローカル実機テスト時の一時ファイル
+.run-state.json
+.api-stdout.log
+.api-stderr.log
+.web-stdout.log
+.web-stderr.log
+
+# PR 本文の一時ファイル
+.pr-body-*.md
+
+# 動作確認用サンプルデータ
+sample-data/
+
+# 性能スパイクの生成物
+db/fixtures/perf/sample_*.geojson
+db/fixtures/perf/wb0_results.txt
