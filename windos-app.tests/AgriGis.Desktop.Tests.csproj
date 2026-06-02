@@ -8,6 +8,8 @@
     <IsTestProject>true</IsTestProject>
     <RootNamespace>AgriGis.Desktop.Tests</RootNamespace>
     <UseWindowsForms>false</UseWindowsForms>
+    <!-- WC1 C101: windos-app (x64 固定) と整合 -->
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Forms;
 using AgriGis.Desktop.Services;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AgriGis.Desktop;
@@ -14,9 +16,29 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        // WC1 C101: appsettings.json をロードし、Gdal:ConfigureOnStartup=true (既定) なら
+        // GDAL を初期化する。Phase C Shapefile インポート (C102 GdalLayerSource) の前提条件。
+        // Application.Run より先に呼ぶこと (OGR は process global state を持つため)。
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: true)
+            .Build();
+
+        if (configuration.GetValue("Gdal:ConfigureOnStartup", true))
+        {
+            MaxRev.Gdal.Core.GdalBase.ConfigureAll();
+            Trace.WriteLine("[GDAL] ConfigureAll() done.");
+            Console.WriteLine("[GDAL] ConfigureAll() done.");
+        }
+        else
+        {
+            Trace.WriteLine("[GDAL] ConfigureAll() skipped (Gdal:ConfigureOnStartup=false).");
+        }
+
         ApplicationConfiguration.Initialize();
 
         var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(configuration);
 
         // A401: セッション保持 (in-memory)。A402 (LoginForm) でログイン成功時に Set される
         services.AddSingleton<ISessionStore, InMemorySessionStore>();
