@@ -30,10 +30,14 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
         // WB4 B406: レイヤ管理メニュー
-        layerAdminMenuItem.Click += (_, _) =>
+        layerAdminMenuItem.Click += async (_, _) =>
         {
-            using var f = _sp.GetRequiredService<LayerAdminForm>();
-            f.ShowDialog(this);
+            using (var f = _sp.GetRequiredService<LayerAdminForm>())
+            {
+                f.ShowDialog(this);
+            }
+            // 追加/削除が走った可能性があるので戻ってきたら一覧を再読込
+            await ReloadLayersAsync();
         };
         // admin 以外で Visible=false (サーバの RequireRole と 2 重防御)
         layerAdminMenuItem.Visible = _session.Current?.IsAdmin ?? false;
@@ -82,18 +86,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
                 _bridge.Send("auth_token", new { accessToken = session.AccessToken });
             }
 
-            // レイヤ一覧を取得して ComboBox に流す
-            SetStatus("Loading layers...");
-            _layers = await _api.GetLayersAsync(CancellationToken.None);
-            layerCombo.Items.Clear();
-            foreach (var l in _layers)
-            {
-                layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
-            }
-            if (_layers.Count > 0)
-            {
-                layerCombo.SelectedIndex = 0;
-            }
+            await ReloadLayersAsync();
 
             SetStatus("Ready");
             ApplyGuestRestriction();
@@ -117,6 +110,45 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     {
         var isGuest = _session.Current?.IsGuest ?? false;
         attributeEditor.SetReadOnly(isGuest);
+    }
+
+    // WB5 fix: LayerAdminForm からのインポート/削除後に呼ぶ、または起動時の初期読込で呼ぶ。
+    // 現在選択中の layer_id を保持して再選択を試みる。
+    private async Task ReloadLayersAsync()
+    {
+        try
+        {
+            SetStatus("Loading layers...");
+            var prevLayerId = layerCombo.SelectedIndex >= 0 && layerCombo.SelectedIndex < _layers.Count
+                ? (int?)_layers[layerCombo.SelectedIndex].LayerId
+                : null;
+
+            _layers = await _api.GetLayersAsync(CancellationToken.None);
+            layerCombo.Items.Clear();
+            foreach (var l in _layers)
+            {
+                layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
+            }
+            if (_layers.Count == 0)
+            {
+                SetStatus("No layers");
+                return;
+            }
+
+            var restoreIndex = prevLayerId is { } pid
+                ? _layers.ToList().FindIndex(l => l.LayerId == pid)
+                : -1;
+            layerCombo.SelectedIndex = restoreIndex >= 0 ? restoreIndex : 0;
+            SetStatus($"{_layers.Count} layers");
+        }
+        catch (UnauthorizedApiException)
+        {
+            await HandleUnauthorizedAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"layer reload failed: {ex.Message}");
+        }
     }
 
     private async Task HandleUnauthorizedAsync()

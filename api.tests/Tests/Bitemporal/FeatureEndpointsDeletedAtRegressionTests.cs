@@ -19,6 +19,37 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
     public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
+    public async Task DeletedLayer_LayersGet_DoesNotInclude()
+    {
+        await using var api = new ApiFactory(_pg.ConnectionString);
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
+
+        // 初期は 2 レイヤ
+        var beforeRes = await client.GetAsync("/api/layers");
+        var beforeList = await beforeRes.Content.ReadFromJsonAsync<List<JsonElement>>();
+        Assert.Equal(2, beforeList!.Count);
+
+        // layer 2 を論理削除
+        await using (var conn = new NpgsqlConnection(_pg.ConnectionString))
+        {
+            await conn.OpenAsync();
+            await using var cmd = new NpgsqlCommand(
+                "UPDATE layers SET deleted_at = now() WHERE layer_id = 2", conn);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // 削除後の GET /api/layers → 1 件 (layer 1 のみ)
+        var afterRes = await client.GetAsync("/api/layers");
+        var afterList = await afterRes.Content.ReadFromJsonAsync<List<JsonElement>>();
+        Assert.Single(afterList!);
+        Assert.Equal(1, afterList![0].GetProperty("layerId").GetInt32());
+
+        // GET /api/layers/2/schema → 404 (deleted_at IS NULL ヒットなし)
+        var schemaRes = await client.GetAsync("/api/layers/2/schema");
+        Assert.Equal(HttpStatusCode.NotFound, schemaRes.StatusCode);
+    }
+
+    [Fact]
     public async Task DeletedLayer_FeaturesGet_ReturnsEmpty()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
