@@ -1,25 +1,53 @@
-import GeoJSON from 'ol/format/GeoJSON';
+import XYZ from 'ol/source/XYZ';
 import type { MapContext } from '../map/mapInit';
-import { fetchFeatures, fetchLayers } from '../api/client';
+import { fetchLayers, getCurrentAccessToken } from '../api/client';
 
-const geoJsonFormat = new GeoJSON({
-  dataProjection: 'EPSG:4326',
-  featureProjection: 'EPSG:3857'
-});
+// D301 (WD3): VectorLayer 経路を廃止し TileLayer(XYZ) で /tiles/{layerId}/{theme}/{z}/{x}/{y}.png を参照
+// tileLoadFunction で Authorization: Bearer {jwt} を付与する。jwt は api/client.ts setAccessToken で更新される。
 
-export async function loadFeatures(ctx: MapContext, layerId: number): Promise<void> {
-  try {
-    const fc = await fetchFeatures(layerId);
-    ctx.vectorSource.clear();
-    ctx.vectorSource.addFeatures(geoJsonFormat.readFeatures(fc));
+export function setBaseLayerSource(ctx: MapContext, layerId: number, theme: string): void {
+  const url = `/tiles/${layerId}/${theme}/{z}/{x}/{y}.png`;
+  const source = new XYZ({
+    url,
+    tileLoadFunction: (tile, src) => {
+      const image = (tile as unknown as { getImage(): HTMLImageElement }).getImage();
+      const token = getCurrentAccessToken();
+      if (!token) {
+        // fallback: src を直接代入 (anonymous)
+        image.src = src;
+        return;
+      }
+      // fetch 経由で Authorization ヘッダを付け、blob URL に置換
+      fetch(src, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => {
+          if (!r.ok) throw new Error(`tile fetch failed: ${r.status}`);
+          return r.blob();
+        })
+        .then((blob) => {
+          const obj = URL.createObjectURL(blob);
+          image.src = obj;
+          image.onload = () => URL.revokeObjectURL(obj);
+        })
+        .catch((e) => {
+          console.error('[tile]', e);
+        });
+    },
+    crossOrigin: 'anonymous'
+  });
+  ctx.baseLayer.setSource(source);
+  ctx.currentLayerId = layerId;
+  ctx.currentTheme = theme;
+}
 
-    const extent = ctx.vectorSource.getExtent();
-    if (extent && extent.every((v) => Number.isFinite(v)) && extent[0] !== extent[2]) {
-      ctx.view.fit(extent, { padding: [40, 40, 40, 40], maxZoom: 18 });
-    }
-  } catch (e) {
-    console.error('loadFeatures', e);
-  }
+// D303 (WD3): theme_change envelope を受領した時に呼ぶ
+export function changeTheme(ctx: MapContext, theme: string): void {
+  if (ctx.currentLayerId === null) return;
+  setBaseLayerSource(ctx, ctx.currentLayerId, theme);
+}
+
+// loadFeatures は名前を残しつつ意味を「layer/theme 差替」に縮退
+export function loadFeatures(ctx: MapContext, layerId: number, theme: string = 'default'): void {
+  setBaseLayerSource(ctx, layerId, theme);
 }
 
 export async function wireLayerSelect(ctx: MapContext): Promise<void> {
@@ -36,11 +64,11 @@ export async function wireLayerSelect(ctx: MapContext): Promise<void> {
       select.appendChild(opt);
     }
     select.addEventListener('change', () => {
-      void loadFeatures(ctx, Number(select.value));
+      loadFeatures(ctx, Number(select.value), ctx.currentTheme);
     });
     if (layers.length > 0) {
       select.value = String(layers[0].layerId);
-      await loadFeatures(ctx, layers[0].layerId);
+      loadFeatures(ctx, layers[0].layerId, ctx.currentTheme);
     }
   } catch (e) {
     console.error('wireLayerSelect', e);

@@ -49,7 +49,7 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, schemaRes.StatusCode);
     }
 
-    [Fact]
+    [Fact(Skip = "D504 (WD5) で {entityId} 単発 GET + DB SELECT ベースに書き換え予定。Phase D D303 で ?layerId= は 410 Gone。")]
     public async Task DeletedLayer_FeaturesGet_ReturnsEmpty()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);

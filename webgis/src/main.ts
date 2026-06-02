@@ -16,16 +16,17 @@ wireSelection(ctx);
 void wireLayerSelect(ctx);
 
 // Host → Web: auth_token / layer_select / features_reload を受ける
+// D303 (WD3): layer_select で theme 引数も受領
 onMessage((msg) => {
   if (msg.type === 'auth_token') {
     const p = msg.payload as AuthTokenPayload;
     setAccessToken(p.accessToken);
   } else if (msg.type === 'layer_select') {
     const p = msg.payload as LayerSelectPayload;
-    void loadFeatures(ctx, p.layerId);
+    loadFeatures(ctx, p.layerId, p.theme ?? 'default');
   } else if (msg.type === 'features_reload') {
     const p = msg.payload as FeaturesReloadPayload;
-    void loadFeatures(ctx, p.layerId);
+    loadFeatures(ctx, p.layerId);
   }
 });
 

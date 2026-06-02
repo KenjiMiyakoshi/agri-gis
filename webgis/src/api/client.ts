@@ -1,6 +1,5 @@
 import type {
   CreateFeatureRequestDto,
-  FeatureCollectionDto,
   FeatureDto,
   FeatureHistoryDto,
   LayerDto,
@@ -17,6 +16,11 @@ let _accessToken: string | null = null;
 
 export function setAccessToken(token: string | null): void {
   _accessToken = token;
+}
+
+// D301 (WD3): tileLoadFunction から JWT を参照するため getter を公開
+export function getCurrentAccessToken(): string | null {
+  return _accessToken;
 }
 
 // 認証ヘッダを既存ヘッダ群にマージ
@@ -89,11 +93,9 @@ export async function getLayerSchema(layerId: number): Promise<LayerSchemaRespon
 
 // --- Features (read) ---
 
-export async function getFeatures(layerId: number, asOf?: string): Promise<FeatureCollectionDto> {
-  const params = new URLSearchParams({ layerId: String(layerId) });
-  if (asOf) params.set('asOf', asOf);
-  return handle<FeatureCollectionDto>(await authFetch(`${BASE}/features?${params.toString()}`));
-}
+// D205 (WD2) / D303 (WD3): getFeatures (?layerId= 経由全件 GeoJSON) は Phase D で廃止予定。
+// WD2 で Sunset ヘッダ + Deprecation を付与済、WD3 末で API 側 410 化、本関数も削除予定。
+// 一時的に残すが、コール元は controllers/layer.ts から既に削除済。
 
 export async function getFeature(entityId: string, asOf?: string): Promise<FeatureDto> {
   const qs = asOf ? `?asOf=${encodeURIComponent(asOf)}` : '';
@@ -158,7 +160,33 @@ export async function deleteFeature(
   await handle<void>(res);
 }
 
+// --- D302 (WD3): Selection ---
+
+export interface CreateSelectionRequest {
+  entityIds: string[];
+  colorHex?: string;
+}
+
+export interface CreateSelectionResponse {
+  sid: string;
+  ttl: string;
+  count: number;
+}
+
+export async function createSelection(req: CreateSelectionRequest): Promise<CreateSelectionResponse> {
+  const res = await authFetch(`${BASE}/selection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req)
+  });
+  return handle<CreateSelectionResponse>(res);
+}
+
+export async function deleteSelection(sid: string): Promise<void> {
+  const res = await authFetch(`${BASE}/selection/${sid}`, { method: 'DELETE' });
+  await handle<void>(res);
+}
+
 // --- 互換エイリアス（既存呼び出しを壊さないため） ---
 
 export const fetchLayers = getLayers;
-export const fetchFeatures = (layerId: number) => getFeatures(layerId);

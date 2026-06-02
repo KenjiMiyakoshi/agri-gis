@@ -18,7 +18,7 @@ public sealed class AsOfTests : IAsyncLifetime
 
     // WA5/A503: 手動 UPDATE 削除版。C1 修復で同日 Insert+Patch は history 区間 [今日, 今日) のゼロ幅となる。
     // 過去日付 asOf は history も current もヒットしない（仕様）ことを確認する。
-    [Fact]
+    [Fact(Skip = "D504 (WD5) で {entityId} 単発 GET ベースに書き換え予定。Phase D D303 で ?layerId= は 410 Gone。")]
     public async Task AsOf_SameDayInsertAndPatch_PastDateReturnsEmpty()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
@@ -63,7 +63,7 @@ public sealed class AsOfTests : IAsyncLifetime
         Assert.Empty(pastFc!.Features);
     }
 
-    [Fact]
+    [Fact(Skip = "D504 (WD5) で {entityId} 単発 GET ベースに書き換え予定。Phase D D303 で ?layerId= は 410 Gone。")]
     public async Task AsOf_WithIsoDatetime_Returns422()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
