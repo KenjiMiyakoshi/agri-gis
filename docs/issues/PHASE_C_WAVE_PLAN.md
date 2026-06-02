@@ -1,6 +1,6 @@
 # agri-gis Phase C Wave 分割計画 (案 P)
 
-`PHASE_C_ISSUES_INDEX.md` の 14 Issue を、Phase A の WA1〜WA5 / Phase B の WB0〜WB5 と同じ流儀で Wave 分割する。Phase B より小規模 (11.5 人日 / 14 Issue) であることと、クリティカルパスが「PoC → 配線 → 骨格 → 並列実装 → UI 統合 → 並列テスト → docs」の単線であることから、**5 Wave 構成 (WC0〜WC4)** を採用する。
+`PHASE_C_ISSUES_INDEX.md` の 15 Issue を、Phase A の WA1〜WA5 / Phase B の WB0〜WB5 と同じ流儀で Wave 分割する。Phase B より小規模 (11.5 人日 / 15 Issue) であることと、クリティカルパスが「PoC → 配線 → 骨格 → 並列実装 → UI 統合 → 並列テスト → docs」の単線であることから、**5 Wave 構成 (WC0〜WC4)** を採用する。
 
 ## 0. 運用前提 (Phase A/B 踏襲)
 
@@ -20,7 +20,7 @@
 | **WC2** | ドメイン部品の並列実装 | C103, C104, C105, C106, C301, C302 | 5.0d | WC1 完了 | **6 Issue 全て並列可** |
 | **WC3** | UI 統合 (ImportWizardForm Step1) | C401 | 1.2d | WC2 完了 | 単独 |
 | **WC4** | テスト群 + ドキュメント | C501, C502, C503, C504, C601 | 2.8d | WC3 完了 (C601 のみ C501-C503 待ち) | C501/C502/C504 並列 → C503 → C601 |
-| | **合計** | **14 Issue** | **11.5d** | | |
+| | **合計** | **15 Issue** | **11.5d** | | |
 
 クリティカルパス: WC0 (0.5d) → WC1 (2.0d) → WC2 ボトルネック (C103/C104 直列換算 1.5d) → WC3 (1.2d) → WC4 (C501→C503→C601 直列換算 2.3d) ≒ **7.5 営業日 + バッファ**。並列度を最大化すれば 8〜9 営業日で全 Wave マージ可能。
 

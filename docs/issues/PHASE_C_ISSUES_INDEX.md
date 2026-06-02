@@ -2,7 +2,7 @@
 
 `PHASE_C_DESIGN_P.md` 分割。`C1xx`=WinForms 配線 / `C3xx`=スキーマ推論・OGR 写像 / `C4xx`=ImportWizardForm UI / `C5xx`=Tests / `C6xx`=Docs。API/DB 拡張は本 Phase ではゼロ (Phase B `fn_feature_insert` / `audit_log.meta_jsonb` をそのまま使用) のため C2xx は欠番。S=0.5d / M=1d / L=1.5d。
 
-## 一覧 (14 Issue / 11.5d)
+## 一覧 (15 Issue / 11.5d)
 
 | # | タイトル | 工数 | 主担当 | 依存 |
 |---|---|---|---|---|
