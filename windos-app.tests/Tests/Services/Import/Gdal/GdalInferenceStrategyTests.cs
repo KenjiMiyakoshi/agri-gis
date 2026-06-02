@@ -113,6 +113,56 @@ public sealed class GdalInferenceStrategyTests
     }
 
     [Fact]
+    public void Infer_TotalExceedsSample_Nullable_ConservativeRequired()
+    {
+        // Phase C smoke test 6件目バグ回帰防止: layer の実件数が SampleSize (100) を
+        // 超える場合、先頭 100 件が全部 non-empty でも sample 外に空値が潜む可能性が
+        // あるため Required=false / Nullable=true を保守的に採用する。
+        var (ds, layer) = CreateMemoryLayer();
+        using (ds)
+        using (var fd = new FieldDefn("code", FieldType.OFTString))
+        {
+            fd.SetWidth(8);
+            layer.CreateField(fd, 1);
+
+            // 先頭 100 件は全部 non-empty。101 件目以降に空が混ざる SHP を模擬する
+            // ためにここでは 150 件投入 (sample 100 < 150 = totalFeatures)。
+            for (int i = 0; i < 150; i++)
+            {
+                AddFeature(layer, new[] { fd }, new object?[] { $"v{i:D3}" });
+            }
+
+            var fields = GdalInferenceStrategy.Infer(layer);
+            var code = fields.Single(f => f.Name == "code");
+            Assert.True(code.Nullable, "sample が全件カバーしないなら保守的に Nullable=true");
+            Assert.False(code.Required, "sample が全件カバーしないなら保守的に Required=false");
+        }
+    }
+
+    [Fact]
+    public void Infer_TotalEqualsSample_StrictRequired_WhenAllNonEmpty()
+    {
+        // 実件数が SampleSize 以下なら sample == 全件なので Strict mode で判定する。
+        // 全件 non-empty なら Required=true を維持。
+        var (ds, layer) = CreateMemoryLayer();
+        using (ds)
+        using (var fd = new FieldDefn("code", FieldType.OFTString))
+        {
+            fd.SetWidth(8);
+            layer.CreateField(fd, 1);
+            for (int i = 0; i < 10; i++)
+            {
+                AddFeature(layer, new[] { fd }, new object?[] { $"v{i}" });
+            }
+
+            var fields = GdalInferenceStrategy.Infer(layer);
+            var code = fields.Single(f => f.Name == "code");
+            Assert.False(code.Nullable);
+            Assert.True(code.Required);
+        }
+    }
+
+    [Fact]
     public void Infer_AllIso8601String_PromotedToDate()
     {
         var (ds, layer) = CreateMemoryLayer();

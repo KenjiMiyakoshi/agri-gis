@@ -13,8 +13,12 @@ namespace AgriGis.Desktop.Services.Import.InferenceStrategies;
 //   OFTBinary                     → skip + WARN
 //   OFTStringList / OFTIntegerList / OFTRealList → "string" (JSON 配列で文字列化)
 //
-// nullable 再推定: 100 サンプリングで 1 件でも null/空文字なら nullable=true。
-// date 昇格: OFTString で 100 件全てが ISO8601 (yyyy-MM-dd) なら "date" に昇格。
+// nullable 再推定: サンプリング N 件で 1 件でも null/空文字なら nullable=true。
+// 加えて、Layer.GetFeatureCount() が SampleSize を超える場合は「sample 外に空値が
+// 潜む」可能性があるため保守的に Required=false / Nullable=true にする。
+// (Phase C smoke test 6件目バグ: 10000件超 SHP で 100 件サンプル全て non-empty
+// だったが 101 件目以降に空があり、API 422 required になっていた)
+// date 昇格: OFTString で N 件全てが ISO8601 (yyyy-MM-dd) なら "date" に昇格。
 public sealed class GdalInferenceStrategy : IInferenceStrategy
 {
     public string SourceFormat => "shapefile";
@@ -54,6 +58,12 @@ public sealed class GdalInferenceStrategy : IInferenceStrategy
             fieldDefns.Add(fd);
         }
 
+        // 実件数 (Shapefile は .shx インデックスから即取得可能)。
+        // OGR 仕様で取得不可なドライバ (一部 streaming) は -1 を返す。-1 は
+        // 「sample が全件カバーしているか不明」として保守側 (Nullable=true) で扱う。
+        long totalFeatures = layer.GetFeatureCount(1);  // 1 = force exact
+        bool sampleCoversAll = totalFeatures >= 0 && totalFeatures <= SampleSize;
+
         // サンプリング: 100 feature
         layer.ResetReading();
         int sampled = 0;
@@ -79,12 +89,15 @@ public sealed class GdalInferenceStrategy : IInferenceStrategy
         layer.ResetReading();
 
         // nullable + date 昇格を確定
+        // 全件 sample 済 (sampleCoversAll) でかつ全件 non-empty のときのみ Required=true。
+        // sample が全件に満たない場合は「sample 外に空値が出る可能性」を考慮して
+        // Required=false / Nullable=true を保守的に採用する。
         for (int i = 0; i < fields.Count; i++)
         {
             var samples = sampleValues[i];
             bool anyNull = samples.Any(v => string.IsNullOrEmpty(v));
-            fields[i].Nullable = anyNull;
-            fields[i].Required = !anyNull;
+            fields[i].Nullable = !sampleCoversAll || anyNull;
+            fields[i].Required = sampleCoversAll && !anyNull;
 
             // OFTString で非 null/空白が全て ISO8601 なら "date" 昇格
             if (fields[i].Type == "string")

@@ -6,6 +6,7 @@ using AgriGis.Desktop.Services.Import.InferenceStrategies;
 using AgriGis.Desktop.Services.Import.Packages;
 using AgriGis.Desktop.Services.Import.Srid;
 using OSGeo.OGR;
+using OSGeo.OSR;
 
 namespace AgriGis.Desktop.Services.Import;
 
@@ -32,6 +33,9 @@ public sealed class GdalLayerSource : ILayerSource
     private DataSource? _dataSource;
     private int? _detectedSrid;
     private SridResolutionState? _sridState;
+    private CoordinateTransformation? _sourceToTargetTransform;
+    private SpatialReference? _sourceSrs;
+    private SpatialReference? _targetSrs;
 
     private readonly List<string> _warnings = new();
     /// <summary>OGR 読み込み中の警告 (Z/M drop / feature skip 等)。</summary>
@@ -140,6 +144,19 @@ public sealed class GdalLayerSource : ILayerSource
         {
             _warnings.Add($"Z/M values dropped at feature {feat.GetFID()}");
             geom.FlattenTo2D();
+        }
+
+        // ソース EPSG → 4326 への座標変換 (smoke test 5件目バグ回避)。
+        // AssumedWgs84 / source==4326 の場合は _sourceToTargetTransform=null で skip。
+        if (_sourceToTargetTransform is not null)
+        {
+            var ret = geom.Transform(_sourceToTargetTransform);
+            if (ret != 0)
+            {
+                throw new InvalidOperationException(
+                    $"OGR Geometry.Transform failed for feature {feat.GetFID()} " +
+                    $"(source EPSG={_detectedSrid}, target=4326, code={ret})");
+            }
         }
 
         // MultiPolygon / MultiLineString 正規化 (案 C 採用、§6.5 論点 8)
@@ -295,10 +312,40 @@ public sealed class GdalLayerSource : ILayerSource
             Trace.WriteLine(
                 $"[GdalLayerSource] missing optional sidecars: {string.Join(',', _package.MissingOptionalExtensions)}");
         }
+
+        // 4. source EPSG → 4326 への CoordinateTransformation を準備する。
+        //    AssumedWgs84 と source==4326 は変換不要。それ以外 (Detected / FallbackToPrompt
+        //    で手動 SRID が指定された) では OGR の OSR で transform を組み立てる。
+        if (_sridState != SridResolutionState.FallbackToWgs84
+            && _detectedSrid.HasValue
+            && _detectedSrid.Value != 4326)
+        {
+            _sourceSrs = new SpatialReference("");
+            var importResult = _sourceSrs.ImportFromEPSG(_detectedSrid.Value);
+            if (importResult != 0)
+            {
+                throw new InvalidOperationException(
+                    $"OSR ImportFromEPSG({_detectedSrid.Value}) failed (code={importResult}). " +
+                    $"This SRID is not known to GDAL's proj database.");
+            }
+            _targetSrs = new SpatialReference("");
+            _targetSrs.ImportFromEPSG(4326);
+            // PostGIS 等と整合させるため Authority 順 (lat,lon for 4326) ではなく
+            // GeoJSON 仕様の lon,lat 順を強制する。
+            _sourceSrs.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+            _targetSrs.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+            _sourceToTargetTransform = new CoordinateTransformation(_sourceSrs, _targetSrs);
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
+        _sourceToTargetTransform?.Dispose();
+        _sourceToTargetTransform = null;
+        _sourceSrs?.Dispose();
+        _sourceSrs = null;
+        _targetSrs?.Dispose();
+        _targetSrs = null;
         _dataSource?.Dispose();
         _dataSource = null;
         await _package.DisposeAsync();
