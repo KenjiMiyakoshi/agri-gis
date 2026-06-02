@@ -33,4 +33,16 @@ public interface IApiClient
     Task DeleteFeatureAsync(
         Guid entityId,
         CancellationToken ct);
+
+    // WB3 B401: AdminLayers CRUD
+    Task<IReadOnlyList<LayerAdminDto>> ListLayersAdminAsync(bool includeDeleted, CancellationToken ct);
+    Task<LayerAdminDto> CreateLayerAsync(CreateLayerRequestDto req, CancellationToken ct);
+    Task<LayerAdminDto> UpdateLayerAsync(int layerId, UpdateLayerRequestDto req, CancellationToken ct);
+    Task DeleteLayerAsync(int layerId, CancellationToken ct);
+
+    // WB3 B401: Import jobs + bulk
+    Task<ImportJobDto> StartImportJobAsync(int layerId, StartImportJobRequestDto req, CancellationToken ct);
+    Task<ImportJobDto> GetImportJobAsync(Guid jobId, CancellationToken ct);
+    Task<ImportJobDto> FinalizeImportJobAsync(Guid jobId, FinalizeImportJobRequestDto req, CancellationToken ct);
+    Task<BulkFeaturesResponseDto> BulkInsertFeaturesAsync(int layerId, BulkFeaturesRequestDto req, CancellationToken ct);
 }
