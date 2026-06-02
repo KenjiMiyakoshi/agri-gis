@@ -209,7 +209,7 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
             return;
         }
 
-        await using var source = CreateSource();
+        await using var source = await CreateSourceAsync(ct);
         var fields = await source.InferSchemaAsync(ct);
         InferredFields.Clear();
         foreach (var f in fields) InferredFields.Add(f);
@@ -247,7 +247,7 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
             // 3. Read features → chunk × N
             int chunkOrdinal = 0;
             int total = 0;
-            await using var source = CreateSource();
+            await using var source = await CreateSourceAsync(ct);
             await foreach (var chunk in Chunker.ChunkAsync(source.ReadFeaturesAsync(4326, ct), chunkSize, ct))
             {
                 var items = chunk.Select(f => new BulkFeatureItemDto(f.Geometry, f.Properties)).ToList();
@@ -286,7 +286,7 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
         }
     }
 
-    private ILayerSource CreateSource()
+    private async ValueTask<ILayerSource> CreateSourceAsync(CancellationToken ct)
     {
         if (_filePath is null) throw new InvalidOperationException("FilePath is null");
         switch (_sourceFormat)
@@ -298,7 +298,7 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
             case "shapefile":
                 if (_encodingResolver is null || _importOptions is null)
                     throw new InvalidOperationException("Shapefile import requires encoding/options dependencies");
-                var pkg = ShapefilePackage.OpenAsync(_filePath, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+                var pkg = await ShapefilePackage.OpenAsync(_filePath, ct);
                 var encResolver = !string.IsNullOrEmpty(_encodingOverride)
                     ? (IEncodingResolver)new InlineEncodingResolver(_encodingOverride!)
                     : _encodingResolver;

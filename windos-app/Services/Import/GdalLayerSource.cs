@@ -80,9 +80,14 @@ public sealed class GdalLayerSource : ILayerSource
         var defn = layer.GetLayerDefn();
         var fieldCount = defn.GetFieldCount();
         var fieldNames = new string[fieldCount];
+        var fieldTypes = new FieldType[fieldCount];
+        var fieldSubTypes = new FieldSubType[fieldCount];
         for (int i = 0; i < fieldCount; i++)
         {
-            fieldNames[i] = defn.GetFieldDefn(i).GetName();
+            var fd = defn.GetFieldDefn(i);
+            fieldNames[i] = fd.GetName();
+            fieldTypes[i] = fd.GetFieldType();
+            fieldSubTypes[i] = fd.GetSubType();
         }
 
         layer.ResetReading();
@@ -106,7 +111,7 @@ public sealed class GdalLayerSource : ILayerSource
             GeoJsonFeature? converted;
             try
             {
-                converted = ConvertFeature(feat, fieldNames);
+                converted = ConvertFeature(feat, fieldNames, fieldTypes, fieldSubTypes);
             }
             catch (Exception ex)
             {
@@ -124,7 +129,8 @@ public sealed class GdalLayerSource : ILayerSource
         }
     }
 
-    private GeoJsonFeature? ConvertFeature(Feature feat, string[] fieldNames)
+    private GeoJsonFeature? ConvertFeature(Feature feat, string[] fieldNames,
+        FieldType[] fieldTypes, FieldSubType[] fieldSubTypes)
     {
         using var geom = feat.GetGeometryRef();
         if (geom is null) return null;
@@ -165,12 +171,46 @@ public sealed class GdalLayerSource : ILayerSource
                 props[name] = nullDoc.RootElement.Clone();
                 continue;
             }
-            var s = feat.GetFieldAsString(idx);
-            using var pdoc = JsonDocument.Parse(JsonSerializer.Serialize(s));
+            // OGR FieldType に応じた JSON 値で組み立てる (API スキーマバリデーションと整合)
+            var jsonLiteral = BuildFieldJsonLiteral(feat, idx, fieldTypes[i], fieldSubTypes[i]);
+            using var pdoc = JsonDocument.Parse(jsonLiteral);
             props[name] = pdoc.RootElement.Clone();
         }
 
         return new GeoJsonFeature(geometry, props);
+    }
+
+    /// <summary>
+    /// OGR Feature の特定フィールドを、`InferredField.Type` (integer/number/string/date/boolean)
+    /// と整合する JSON リテラルに変換する。
+    /// </summary>
+    private static string BuildFieldJsonLiteral(Feature feat, int idx, FieldType type, FieldSubType subType)
+    {
+        switch (type)
+        {
+            case FieldType.OFTInteger:
+            case FieldType.OFTInteger64:
+                if (subType == FieldSubType.OFSTBoolean)
+                {
+                    return feat.GetFieldAsInteger(idx) != 0 ? "true" : "false";
+                }
+                return feat.GetFieldAsInteger64(idx).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            case FieldType.OFTReal:
+                return feat.GetFieldAsDouble(idx).ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
+            case FieldType.OFTDate:
+            case FieldType.OFTDateTime:
+                // GetFieldAsDateTime は (year, month, day, hour, minute, second, tzFlag) を out で返す
+                int year = 0, month = 0, day = 0, hour = 0, minute = 0, tzFlag = 0;
+                float seconds = 0f;
+                feat.GetFieldAsDateTime(idx, out year, out month, out day, out hour, out minute, out seconds, out tzFlag);
+                return JsonSerializer.Serialize($"{year:D4}-{month:D2}-{day:D2}");
+
+            default:
+                // OFTString / OFTBinary / *List 等は文字列扱い
+                return JsonSerializer.Serialize(feat.GetFieldAsString(idx));
+        }
     }
 
     /// <summary>
