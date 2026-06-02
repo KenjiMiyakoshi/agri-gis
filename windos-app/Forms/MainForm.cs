@@ -8,7 +8,7 @@ using Microsoft.Web.WebView2.Core;
 
 namespace AgriGis.Desktop.Forms;
 
-public partial class MainForm : Form
+public partial class MainForm : Form, IFeatureSaveCoordinator
 {
     private const string WebGisUrl = "http://localhost:5173";
 
@@ -24,10 +24,28 @@ public partial class MainForm : Form
         _session = session;
         _sp = sp;
         InitializeComponent();
+        // WB4 B405 (H4 解消): AttributeEditorControl に IFeatureSaveCoordinator を注入
+        attributeEditor.SetCoordinator(this);
         layerCombo.SelectedIndexChanged += OnLayerComboChanged;
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
+        // WB4 B406: レイヤ管理メニュー
+        layerAdminMenuItem.Click += (_, _) =>
+        {
+            using var f = _sp.GetRequiredService<LayerAdminForm>();
+            f.ShowDialog(this);
+        };
+        // admin 以外で Visible=false (サーバの RequireRole と 2 重防御)
+        layerAdminMenuItem.Visible = _session.Current?.IsAdmin ?? false;
     }
+
+    // IFeatureSaveCoordinator: AttributeEditorControl から呼ばれる
+    public Task<PatchFeatureResultDto> UpdateFeatureAsync(
+        Guid entityId, UpdateFeatureRequestDto req, int ifMatchVersion, CancellationToken ct)
+        => _api.UpdateFeatureAsync(entityId, req, ifMatchVersion, ct);
+
+    public Task<FeatureDto> GetFeatureAsync(Guid entityId, CancellationToken ct)
+        => _api.GetFeatureAsync(entityId, asOf: null, ct);
 
     protected override async void OnLoad(EventArgs e)
     {

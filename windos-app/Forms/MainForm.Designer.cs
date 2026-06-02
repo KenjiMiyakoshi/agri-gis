@@ -14,6 +14,8 @@ partial class MainForm
     private AttributeEditorControl attributeEditor = null!;
     private StatusStrip statusStrip = null!;
     private ToolStripStatusLabel statusLabel = null!;
+    private MenuStrip menuStrip = null!;
+    internal ToolStripMenuItem layerAdminMenuItem = null!;
 
     protected override void Dispose(bool disposing)
     {
@@ -33,6 +35,12 @@ partial class MainForm
         attributeEditor = new AttributeEditorControl();
         statusStrip = new StatusStrip();
         statusLabel = new ToolStripStatusLabel();
+        // WB4 B406: 管理 → レイヤ管理 メニュー (admin のみ Visible=true)
+        menuStrip = new MenuStrip();
+        var adminMenu = new ToolStripMenuItem("管理");
+        layerAdminMenuItem = new ToolStripMenuItem("レイヤ管理...");
+        adminMenu.DropDownItems.Add(layerAdminMenuItem);
+        menuStrip.Items.Add(adminMenu);
 
         ((System.ComponentModel.ISupportInitialize)webView).BeginInit();
         rightPanel.SuspendLayout();
@@ -79,6 +87,8 @@ partial class MainForm
         Controls.Add(webView);
         Controls.Add(rightPanel);
         Controls.Add(statusStrip);
+        Controls.Add(menuStrip);
+        MainMenuStrip = menuStrip;
 
         Name = "MainForm";
         Text = "AgriGis";
