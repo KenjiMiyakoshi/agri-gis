@@ -90,4 +90,22 @@ public sealed class FakeApiClient : IApiClient
             FeatureIds: req.Features.Select((_, i) => (long)(BulkInsertCalls * 1000 + i)).ToList());
         return Task.FromResult(res);
     }
+
+    // D401 (WD4): Phase D 新メソッド (テスト用 stub)
+    public Task<CreateSelectionResponseDto> CreateSelectionAsync(
+        IReadOnlyList<Guid> entityIds, string? colorHex, CancellationToken ct)
+        => Task.FromResult(new CreateSelectionResponseDto(Guid.NewGuid(), "session", entityIds.Count));
+
+    public Task DeleteSelectionAsync(Guid sid, CancellationToken ct)
+        => Task.CompletedTask;
+
+    public Task LogoutAsync(CancellationToken ct)
+        => Task.CompletedTask;
+
+    public Task<LayerStyleDto> GetLayerStyleAsync(int layerId, CancellationToken ct)
+        => Task.FromResult(new LayerStyleDto(
+            System.Text.Json.JsonDocument.Parse("{\"themes\":{}}").RootElement.Clone()));
+
+    public Task<LayerStyleDto> UpdateLayerStyleAsync(int layerId, LayerStyleDto style, CancellationToken ct)
+        => Task.FromResult(style);
 }
