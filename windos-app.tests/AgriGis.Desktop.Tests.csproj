@@ -23,4 +23,10 @@
     <ProjectReference Include="..\windos-app\AgriGis.Desktop.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\import\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

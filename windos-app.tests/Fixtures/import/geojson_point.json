@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [143.20, 42.91] },
+      "properties": { "name": "p1", "value": 12, "active": true, "observed_at": "2026-06-01" }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [143.21, 42.91] },
+      "properties": { "name": "p2", "value": 24, "active": false, "observed_at": "2026-06-02" }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [143.22, 42.92] },
+      "properties": { "name": "p3", "value": 7, "active": true, "observed_at": null }
+    }
+  ]
+}

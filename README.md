@@ -219,6 +219,10 @@ dotnet run
 
 詳細は [`docs/message-protocol.md`](docs/message-protocol.md) と [`docs/testing-policy.md`](docs/testing-policy.md)。
 
+## Phase B: レイヤ管理 + インポート
+
+管理者は WinForms メニュー「管理 → レイヤ管理...」から `LayerAdminForm` を起動し、レイヤの作成・削除・インポートを行える。Phase B 対応形式は **GeoJSON** + **CSV (lat/lng 列)**。Shapefile / MapInfo MIF/TAB は **Phase C 申し送り**。詳細は [docs/layer-import.md](docs/layer-import.md) と [docs/PHASE_B_INDEX.md](docs/PHASE_B_INDEX.md)。
+
 ## 既知の制約
 
 - **refresh token なし**：Phase A は access 8h のみ。期限切れで再ログイン (`UnauthorizedApiException` → `LoginForm` の自動表示で UX 緩和)

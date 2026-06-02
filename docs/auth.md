@@ -42,6 +42,9 @@ agri-gis Phase A の認証基盤の運用ガイド。
 | `PUT    /api/admin/layers/{id}/schema` | ○ | 403 | 403 |
 | `*      /api/admin/organizations` | ○ | 403 | 403 |
 | `*      /api/admin/users` | ○ | 403 | 403 |
+| `*      /api/admin/layers` | ○ | 403 | 403 |
+| `*      /api/admin/layers/{id}/import-jobs` | ○ | 403 | 403 |
+| `*      /api/admin/layers/{id}/features/bulk` | ○ | 403 | 403 |
 
 書き込み系 (`POST/PATCH/DELETE /api/features`) は名前付きポリシー `WriteFeature` (admin or general) で制御。`/api/admin/*` は `RequireRole("admin")`。
 
