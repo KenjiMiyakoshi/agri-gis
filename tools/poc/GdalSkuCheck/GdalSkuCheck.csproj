@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Phase C C101 採択方針と整合: Minimal SKU は x64 のみ -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>AgriGis.Tools.GdalSkuCheck</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MaxRev.Gdal.Core" Version="3.10.1.319" />
+    <PackageReference Include="MaxRev.Gdal.WindowsRuntime.Minimal" Version="3.10.1.319" />
+  </ItemGroup>
+
+</Project>
