@@ -219,9 +219,15 @@ dotnet run
 
 詳細は [`docs/message-protocol.md`](docs/message-protocol.md) と [`docs/testing-policy.md`](docs/testing-policy.md)。
 
-## Phase B: レイヤ管理 + インポート
+## Phase B + C: レイヤ管理 + インポート
 
-管理者は WinForms メニュー「管理 → レイヤ管理...」から `LayerAdminForm` を起動し、レイヤの作成・削除・インポートを行える。Phase B 対応形式は **GeoJSON** + **CSV (lat/lng 列)**。Shapefile / MapInfo MIF/TAB は **Phase C 申し送り**。詳細は [docs/layer-import.md](docs/layer-import.md) と [docs/PHASE_B_INDEX.md](docs/PHASE_B_INDEX.md)。
+管理者は WinForms メニュー「管理 → レイヤ管理...」から `LayerAdminForm` を起動し、レイヤの作成・削除・インポートを行える。
+
+- **Phase B 対応形式**: GeoJSON + CSV (lat/lng 列) — `System.Text.Json` + `ProjNet` で C# pure
+- **Phase C 追加**: Shapefile zip — `MaxRev.Gdal.WindowsRuntime.Minimal` SKU 同梱 (x64 固定)、`.cpg` fallback + 3 値 SRID 設定駆動 (`Reject` / `PromptUser` / `AssumeWgs84`)、`audit_log.meta_jsonb.srid_inferred` で監査
+- **Phase C' 申し送り**: MapInfo MIF/MID, TAB (Minimal SKU 含有確認済、Full SKU 切替不要)
+
+詳細は [docs/layer-import.md](docs/layer-import.md) / [docs/PHASE_B_INDEX.md](docs/PHASE_B_INDEX.md) / [docs/PHASE_C_INDEX.md](docs/PHASE_C_INDEX.md)。
 
 ## 既知の制約
 
