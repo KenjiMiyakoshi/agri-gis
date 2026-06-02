@@ -2,18 +2,14 @@ using System.Text.Json;
 using AgriGis.Api.Auth;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
+using AgriGis.Api.Json;
 using Npgsql;
 
 namespace AgriGis.Api.Endpoints;
 
 public static class AdminEndpoints
 {
-    // schema_json を JSONB として書き込む際の Serialize 用。
-    // (#59 で導入された static JsonOpts と同じ設定。マージ後に統合してもよい。)
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
+    // WB2 B201 (H2 解消): api/Json/JsonOpts.Default に集約済み
 
     public static RouteGroupBuilder MapAdminEndpoints(this RouteGroupBuilder group)
     {
@@ -52,7 +48,7 @@ public static class AdminEndpoints
                 throw new ValidationException(errors);
             }
 
-            var schemaJson = JsonSerializer.Serialize(req.Schema, SerializerOptions);
+            var schemaJson = JsonSerializer.Serialize(req.Schema, JsonOpts.Default);
 
             await using var cmd = db.CreateCommand(
                 "SELECT fn_layer_schema_upsert(@id, @s::jsonb, @a, @rid, @uid, @oid)");

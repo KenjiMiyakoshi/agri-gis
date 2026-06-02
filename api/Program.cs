@@ -93,6 +93,7 @@ var adminGroup = app.MapGroup("/api/admin").RequireAuthorization(p => p.RequireR
 adminGroup.MapAdminEndpoints();
 adminGroup.MapGroup("/organizations").MapAdminOrgsEndpoints();
 adminGroup.MapGroup("/users").MapAdminUsersEndpoints();
+adminGroup.MapGroup("/layers").MapAdminLayersEndpoints();
 
 app.Run();
 
