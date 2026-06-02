@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgriGis.Api.Auth;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
+using AgriGis.Api.Json;
 using AgriGis.Api.Validation;
 using Npgsql;
 
@@ -9,13 +10,7 @@ namespace AgriGis.Api.Endpoints;
 
 public static class FeatureEndpoints
 {
-    // JSONB / GeoJSON 文字列の手動 Deserialize 用。
-    // (#59 で JsonOpts.cs が導入される予定。重複は両 PR マージ後に統合可)
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
+    // WB2 B201 (H2 解消): api/Json/JsonOpts.Default に集約済み
 
     public static RouteGroupBuilder MapFeatureEndpoints(this RouteGroupBuilder group)
     {
@@ -24,24 +19,28 @@ public static class FeatureEndpoints
         {
             var asOfDate = ParseAsOf(asOf);
 
+            // WB2 B205: layers.deleted_at IS NULL のレイヤ feature のみ返却
             string sql = asOfDate is null
                 ? @"SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                            attributes_schema_version, created_by, updated_by, created_at, updated_at,
                            attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_current
-                     WHERE layer_id = @id AND geom IS NOT NULL"
+                      FROM feature_current fc
+                     WHERE fc.layer_id = @id AND fc.geom IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)"
                 : @"SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                            attributes_schema_version, created_by, updated_by, created_at, updated_at,
                            attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_current
-                     WHERE layer_id = @id AND geom IS NOT NULL
+                      FROM feature_current fc
+                     WHERE fc.layer_id = @id AND fc.geom IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)
                        AND valid_from <= @asof AND @asof < valid_to
                     UNION ALL
                     SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                            attributes_schema_version, created_by, updated_by, created_at, updated_at,
                            attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_history
-                     WHERE layer_id = @id AND geom IS NOT NULL
+                      FROM feature_history fh
+                     WHERE fh.layer_id = @id AND fh.geom IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.deleted_at IS NULL)
                        AND valid_from <= @asof AND @asof < valid_to";
 
             await using var cmd = db.CreateCommand(sql);
@@ -70,25 +69,29 @@ public static class FeatureEndpoints
         {
             var asOfDate = ParseAsOf(asOf);
 
+            // WB2 B205: layers.deleted_at IS NULL の対象 entity のみ返却
             string sql = asOfDate is null
                 ? @"SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                            attributes_schema_version, created_by, updated_by, created_at, updated_at,
                            attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
-                      FROM feature_current
-                     WHERE entity_id = @e AND geom IS NOT NULL"
+                      FROM feature_current fc
+                     WHERE fc.entity_id = @e AND fc.geom IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)"
                 : @"WITH unioned AS (
                         SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                                attributes_schema_version, created_by, updated_by, created_at, updated_at,
                                attributes, geom
-                          FROM feature_current
-                         WHERE entity_id = @e AND geom IS NOT NULL
+                          FROM feature_current fc
+                         WHERE fc.entity_id = @e AND fc.geom IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)
                            AND valid_from <= @asof AND @asof < valid_to
                         UNION ALL
                         SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                                attributes_schema_version, created_by, updated_by, created_at, updated_at,
                                attributes, geom
-                          FROM feature_history
-                         WHERE entity_id = @e AND geom IS NOT NULL
+                          FROM feature_history fh
+                         WHERE fh.entity_id = @e AND fh.geom IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.deleted_at IS NULL)
                            AND valid_from <= @asof AND @asof < valid_to
                     )
                     SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
@@ -115,6 +118,7 @@ public static class FeatureEndpoints
         // 0209: GET /api/features/{entityId}/history
         group.MapGet("/{entityId:guid}/history", async (Guid entityId, NpgsqlDataSource db) =>
         {
+            // WB2 B205: layers.deleted_at IS NULL の対象のみ
             const string sql = @"
                 SELECT history_id, feature_id, layer_id, entity_id, version,
                        valid_from, valid_to, attributes_schema_version,
@@ -122,8 +126,9 @@ public static class FeatureEndpoints
                        archived_at, archived_by, archived_reason,
                        ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj,
                        attributes
-                  FROM feature_history
-                 WHERE entity_id = @e
+                  FROM feature_history fh
+                 WHERE fh.entity_id = @e
+                   AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.deleted_at IS NULL)
                  ORDER BY valid_to DESC, history_id DESC";
 
             await using var cmd = db.CreateCommand(sql);
@@ -148,7 +153,7 @@ public static class FeatureEndpoints
             LayerSchemaDto schema;
             int schemaVersion;
             await using (var c = db.CreateCommand(
-                "SELECT schema_version, schema_json FROM layers WHERE layer_id = @id"))
+                "SELECT schema_version, schema_json FROM layers WHERE layer_id = @id AND deleted_at IS NULL"))
             {
                 c.Parameters.AddWithValue("id", req.LayerId);
                 await using var rr = await c.ExecuteReaderAsync();
@@ -157,7 +162,7 @@ public static class FeatureEndpoints
                     throw new NotFoundException($"layer not found: {req.LayerId}");
                 }
                 schemaVersion = rr.GetInt32(0);
-                schema = JsonSerializer.Deserialize<LayerSchemaDto>(rr.GetString(1), SerializerOptions)
+                schema = JsonSerializer.Deserialize<LayerSchemaDto>(rr.GetString(1), JsonOpts.Default)
                          ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>());
             }
 
@@ -174,7 +179,7 @@ public static class FeatureEndpoints
             cmd.Parameters.AddWithValue("l", req.LayerId);
             cmd.Parameters.AddWithValue("e", entityId);
             cmd.Parameters.AddWithValue("g", req.Geometry.GetRawText());
-            cmd.Parameters.AddWithValue("a", JsonSerializer.Serialize(attrs, SerializerOptions));
+            cmd.Parameters.AddWithValue("a", JsonSerializer.Serialize(attrs, JsonOpts.Default));
             cmd.Parameters.AddWithValue("act", actor);
             cmd.Parameters.AddWithValue("rid", rid);
             cmd.Parameters.AddWithValue("uid", user.UserId);
@@ -211,7 +216,7 @@ public static class FeatureEndpoints
                 @"SELECT l.schema_json
                     FROM feature_current fc
                     JOIN layers l ON l.layer_id = fc.layer_id
-                   WHERE fc.entity_id = @e"))
+                   WHERE fc.entity_id = @e AND l.deleted_at IS NULL"))
             {
                 c.Parameters.AddWithValue("e", entityId);
                 await using var rr = await c.ExecuteReaderAsync();
@@ -219,7 +224,7 @@ public static class FeatureEndpoints
                 {
                     throw new NotFoundException($"entity not found: {entityId}");
                 }
-                schema = JsonSerializer.Deserialize<LayerSchemaDto>(rr.GetString(0), SerializerOptions)
+                schema = JsonSerializer.Deserialize<LayerSchemaDto>(rr.GetString(0), JsonOpts.Default)
                          ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>());
             }
 
@@ -240,7 +245,7 @@ public static class FeatureEndpoints
             cmd.Parameters.AddWithValue("a",
                 req.Attributes is null
                     ? (object)DBNull.Value
-                    : JsonSerializer.Serialize(req.Attributes, SerializerOptions));
+                    : JsonSerializer.Serialize(req.Attributes, JsonOpts.Default));
             cmd.Parameters.AddWithValue("act", actor);
             cmd.Parameters.AddWithValue("ev", expected);
             cmd.Parameters.AddWithValue("rid", rid);
@@ -257,6 +262,20 @@ public static class FeatureEndpoints
         {
             var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
+
+            // WB2 B205: 論理削除レイヤの feature は触れない (404 で弾く)
+            await using (var precheck = db.CreateCommand(
+                @"SELECT 1
+                    FROM feature_current fc
+                    JOIN layers l ON l.layer_id = fc.layer_id
+                   WHERE fc.entity_id = @e AND l.deleted_at IS NULL"))
+            {
+                precheck.Parameters.AddWithValue("e", entityId);
+                if (await precheck.ExecuteScalarAsync() is null)
+                {
+                    throw new NotFoundException($"entity not found: {entityId}");
+                }
+            }
 
             await using var cmd = db.CreateCommand(
                 "SELECT fn_feature_delete(@e, @a, @r, @uid, @oid)");
@@ -299,7 +318,7 @@ public static class FeatureEndpoints
     private static FeatureDto MapFeatureDto(NpgsqlDataReader r)
     {
         var attrsJson = r.GetString(11);
-        var attributes = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(attrsJson, SerializerOptions)
+        var attributes = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(attrsJson, JsonOpts.Default)
                          ?? new Dictionary<string, JsonElement>();
 
         var geomJson = r.GetString(12);
@@ -337,7 +356,7 @@ public static class FeatureEndpoints
         var geometry = geomDoc.RootElement.Clone();
 
         var attrsJson = r.GetString(16);
-        var attributes = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(attrsJson, SerializerOptions)
+        var attributes = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(attrsJson, JsonOpts.Default)
                          ?? new Dictionary<string, JsonElement>();
 
         return new FeatureHistoryDto(
