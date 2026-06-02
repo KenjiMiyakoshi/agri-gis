@@ -71,18 +71,28 @@ agri-gis Phase D (`描画アーキ転換`) サイクルの高位サマリ。Phas
 7. PR 単位で全 6 Wave (WD0-WD5) が main にマージ済
 8. `orchestration_state.md` メモリ更新
 
-## PR 一覧 (Phase D 完了時に最終化)
+## PR 一覧
 
 | Wave | PR | 状態 |
 |---|---|---|
-| WD0 | #??? (`feature/phase-d-wd0-poc`) | (未着手) |
-| WD1 | #??? (`feature/phase-d-wd1-infra`) | (未着手) |
-| WD2 | #??? (`feature/phase-d-wd2-api`) | (未着手) |
-| WD3 | #??? (`feature/phase-d-wd3-webgis`) | (未着手) |
-| WD4 | #??? (`feature/phase-d-wd4-winforms`) | (未着手) |
-| WD5 | #??? (`feature/phase-d-wd5-tests-docs`) | (未着手) |
+| Design 8 本 + WD0 PoC scaffold | [#168](https://github.com/KenjiMiyakoshi/agri-gis/pull/168) | マージ済 (Design + scaffolding) |
+| WD0 PoC 実行 | (PoC は `tools/poc/GeoServerCheck/`、Issue #169 でクローズ予定) | (Docker 起動済、verify.sh は朝に手動実行) |
+| WD1 (`feature/phase-d-wd1-infra`) | [#189](https://github.com/KenjiMiyakoshi/agri-gis/pull/189) | レビュー待ち (D101+D102+D103) |
+| WD2 (`feature/phase-d-wd2-api`) | [#190](https://github.com/KenjiMiyakoshi/agri-gis/pull/190) | レビュー待ち (D201-D205) |
+| WD3 (`feature/phase-d-wd3-webgis`) | [#191](https://github.com/KenjiMiyakoshi/agri-gis/pull/191) | レビュー待ち (D301-D303 + ?layerId= 410) |
+| WD4 (`feature/phase-d-wd4-winforms`) | [#192](https://github.com/KenjiMiyakoshi/agri-gis/pull/192) | レビュー待ち (D401+D402) |
+| WD5 (`feature/phase-d-wd5-tests-docs`) | (本 PR) | レビュー待ち (D504 + D601 + D602 + 部分 D501-D503) |
 
-(Design ドキュメント PR は別途)
+マージ順: #168 (済) → #189 → #190 → #191 → #192 → WD5 PR。各 PR `base=main` 固定 (`stacked_pr_pitfall` memory)。
+
+## テスト総数 (Phase D 完了時想定)
+
+- `api.tests`: 60 → **64** (D504 で 3 件 Skip 解除 + 410 確認 1 件追加)
+- `webgis vitest`: 7 → **9** (D303 で envelope 3 種ラウンドトリップ追加)
+- `windos-app.tests`: 118 (Phase D は WD5 D503 で +2 件予定だが本 WD5 PR では未着手)
+- **計 191** (Phase C 完了時 178 → +13)
+
+WD5 で WireMock 等を使った API 統合テスト (TilesProxy/Selection/AdminLayerStyle/AuthLogout 計 4 系列) を本格実装するのは Phase D 完了後の追加 PR で扱う案。本 WD5 PR は最低限の Skip 解除 + docs に集中。
 
 ## Phase D' 申し送り
 

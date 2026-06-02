@@ -18,8 +18,11 @@ public sealed class AsOfTests : IAsyncLifetime
 
     // WA5/A503: 手動 UPDATE 削除版。C1 修復で同日 Insert+Patch は history 区間 [今日, 今日) のゼロ幅となる。
     // 過去日付 asOf は history も current もヒットしない（仕様）ことを確認する。
-    [Fact(Skip = "D504 (WD5) で {entityId} 単発 GET ベースに書き換え予定。Phase D D303 で ?layerId= は 410 Gone。")]
-    public async Task AsOf_SameDayInsertAndPatch_PastDateReturnsEmpty()
+    // D504 (WD5): ?layerId= → /{entityId} 単発 GET に書き換え
+    // Phase D で全件 GeoJSON 取得 (?layerId=) を 410 Gone 化したため、bitemporal の検証は
+    // 個別 entity を GET して version / asOf 挙動を見る形に変更。
+    [Fact]
+    public async Task AsOf_SameDayInsertAndPatch_PastDateReturnsNotFound()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
         var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
@@ -47,30 +50,40 @@ public sealed class AsOfTests : IAsyncLifetime
         var patchRes = await client.SendAsync(patchReq);
         Assert.Equal(HttpStatusCode.OK, patchRes.StatusCode);
 
-        // 現在 (asOf 無し) → 新図形 v=2 のみ
-        var currentRes = await client.GetAsync("/api/features?layerId=2");
-        var currentFc = await currentRes.Content.ReadFromJsonAsync<FeatureCollection>();
-        Assert.NotNull(currentFc);
-        var currentFeat = Assert.Single(currentFc!.Features);
-        Assert.Equal(2, currentFeat.Properties.Version);
+        // 現在 (asOf 無し) → 単発 GET で v=2 を確認
+        var currentRes = await client.GetAsync($"/api/features/{entityId}");
+        Assert.Equal(HttpStatusCode.OK, currentRes.StatusCode);
+        var currentFeat = await currentRes.Content.ReadFromJsonAsync<Feature>();
+        Assert.NotNull(currentFeat);
+        Assert.Equal(2, currentFeat!.Properties.Version);
 
-        // 過去 (asOf=3 日前) → 同日 Insert+Patch は history 区間 [今日, 今日) なので 0 件
+        // 過去 (asOf=3 日前) → 同日 Insert+Patch は history 区間 [今日, 今日) なので 404
         var pastDate = DateTime.UtcNow.Date.AddDays(-3).ToString("yyyy-MM-dd");
-        var pastRes = await client.GetAsync($"/api/features?layerId=2&asOf={pastDate}");
-        Assert.Equal(HttpStatusCode.OK, pastRes.StatusCode);
-        var pastFc = await pastRes.Content.ReadFromJsonAsync<FeatureCollection>();
-        Assert.NotNull(pastFc);
-        Assert.Empty(pastFc!.Features);
+        var pastRes = await client.GetAsync($"/api/features/{entityId}?asOf={pastDate}");
+        Assert.Equal(HttpStatusCode.NotFound, pastRes.StatusCode);
     }
 
-    [Fact(Skip = "D504 (WD5) で {entityId} 単発 GET ベースに書き換え予定。Phase D D303 で ?layerId= は 410 Gone。")]
+    // D504 (WD5): 422 検証も /{entityId} 経路に書き換え
+    [Fact]
     public async Task AsOf_WithIsoDatetime_Returns422()
     {
         await using var api = new ApiFactory(_pg.ConnectionString);
         var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
 
-        var res = await client.GetAsync("/api/features?layerId=1&asOf=2026-01-01T00:00:00Z");
+        // 任意の entityId (実在しなくても 422 が先に返るはず: asOf パースエラーが先)
+        var entityId = Guid.NewGuid();
+        var res = await client.GetAsync($"/api/features/{entityId}?asOf=2026-01-01T00:00:00Z");
         Assert.Equal((HttpStatusCode)422, res.StatusCode);
+    }
+
+    // D504 (WD5): Phase D で 410 化された経路は専用テストで検証
+    [Fact]
+    public async Task LegacyLayerIdQuery_Returns410Gone()
+    {
+        await using var api = new ApiFactory(_pg.ConnectionString);
+        var client = new ApiClientFactory(api).WithActorAs("alice", "admin").Build();
+        var res = await client.GetAsync("/api/features?layerId=2");
+        Assert.Equal((HttpStatusCode)410, res.StatusCode);
     }
 
     private sealed record CreatedRes(long FeatureId, string EntityId, int Version, int AttributesSchemaVersion);
