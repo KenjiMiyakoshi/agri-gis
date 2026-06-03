@@ -36,19 +36,23 @@ public sealed class GeoServerStyleSync : IGeoServerStyleSync
         var authValue = Convert.ToBase64String(Encoding.UTF8.GetBytes(
             $"{_opts.AdminUser}:{_opts.ResolveAdminPassword()}"));
 
-        // 1) 既存 style が存在するか HEAD で確認
+        // 1) 既存 style が存在するか GET で確認
+        // (GeoServer REST は HEAD を 405 Method Not Allowed で返すケースがあり信頼できないため
+        //  GET で 200 (存在) / 404 (不在) を判定する。Phase D bug fix)
         bool exists = false;
-        using (var headReq = new HttpRequestMessage(HttpMethod.Head, url))
+        using (var checkReq = new HttpRequestMessage(HttpMethod.Get, url))
         {
-            headReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", authValue);
+            checkReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", authValue);
+            // Accept header 未指定だと GeoServer が SLD content-type negotiation で 500 を返すケースがある
+            checkReq.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             try
             {
-                using var headResp = await client.SendAsync(headReq, ct);
-                exists = headResp.IsSuccessStatusCode;
+                using var checkResp = await client.SendAsync(checkReq, ct);
+                exists = checkResp.IsSuccessStatusCode;
             }
             catch (HttpRequestException ex)
             {
-                _log.LogWarning(ex, "GeoServer HEAD style failed (treating as not-exists): {Url}", url);
+                _log.LogWarning(ex, "GeoServer GET style failed (treating as not-exists): {Url}", url);
                 exists = false;
             }
         }

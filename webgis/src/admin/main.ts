@@ -32,13 +32,14 @@ async function loadJwtFromBridge(): Promise<void> {
   // 当面は localStorage か prompt にフォールバック (開発時のみ)。
   const cached = localStorage.getItem('agri_gis_admin_jwt');
   if (cached) {
-    setAccessToken(cached);
+    setAccessToken(cached.trim());
     return;
   }
   const t = prompt('開発用: JWT を貼り付けてください (POST /api/auth/login で取得)');
   if (t) {
-    setAccessToken(t);
-    localStorage.setItem('agri_gis_admin_jwt', t);
+    const trimmed = t.trim();
+    setAccessToken(trimmed);
+    localStorage.setItem('agri_gis_admin_jwt', trimmed);
   }
 }
 
