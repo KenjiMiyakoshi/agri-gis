@@ -111,7 +111,7 @@ public sealed class MifPackageTests : IDisposable
     {
         var entry = archive.CreateEntry(name);
         await using var es = entry.Open();
-        await using var sw = new StreamWriter(es, Encoding.UTF8);
+        await using var sw = new StreamWriter(es, System.Text.Encoding.UTF8);
         await sw.WriteAsync(content);
     }
 }

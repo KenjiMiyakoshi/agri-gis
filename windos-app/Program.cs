@@ -46,7 +46,12 @@ internal static class Program
 
         // WC2 C104 / C105: Phase C インポート設定 (SridFallbackPolicy / DefaultDbfEncoding)
         services.Configure<ImportOptions>(configuration.GetSection(ImportOptions.SectionName));
-        services.AddSingleton<IEncodingResolver, CpgFileResolver>();
+        // C'301 (WC'3): UcsDetect → CpgFile → Default の chain
+        // CodePagesEncodingProvider を登録 (CP932 等の .NET Encoding 取得に必須)
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        services.AddSingleton<CpgFileResolver>();
+        services.AddSingleton<IEncodingResolver>(sp =>
+            new UcsDetectResolver(sp.GetRequiredService<CpgFileResolver>()));
         // OgrSridDetector が既定。ManualSridDetector は UI 入力後に new で差し替える経路
         services.AddTransient<ISridDetector, OgrSridDetector>();
         // C'202 (WC'2): SridCatalog の起動時登録

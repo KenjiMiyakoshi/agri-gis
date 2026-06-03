@@ -27,6 +27,8 @@
     <!-- WC1 C101: Phase C Shapefile インポート用 GDAL (Minimal SKU、WC0 PoC で含有確認済) -->
     <PackageReference Include="MaxRev.Gdal.Core" Version="3.10.1.319" />
     <PackageReference Include="MaxRev.Gdal.WindowsRuntime.Minimal" Version="3.10.1.319" />
+    <!-- C'301 (WC'3): UTF / 文字コード自動検出 (Mozilla Universal Chardet .NET port、Active メンテ + MIT) -->
+    <PackageReference Include="UTF.Unknown" Version="2.5.1" />
   </ItemGroup>
 
   <ItemGroup>
