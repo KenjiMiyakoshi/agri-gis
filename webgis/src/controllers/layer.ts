@@ -5,11 +5,22 @@ import { fetchLayers, getCurrentAccessToken, getLayerExtent } from '../api/clien
 // D301 (WD3): VectorLayer 経路を廃止し TileLayer(XYZ) で /tiles/{layerId}/{theme}/{z}/{x}/{y}.png を参照
 // tileLoadFunction で Authorization: Bearer {jwt} を付与する。jwt は api/client.ts setAccessToken で更新される。
 
-export function setBaseLayerSource(ctx: MapContext, layerId: number, theme: string, asOf: string | null = null): void {
-  // E401 (WE4): URL に ?asOf= を付与。OL は ?xxx 部分も内部キャッシュキーに含めるので
-  // asOf 切替時に source 自体を作り直すことで cache invalidation。
-  const qs = asOf ? `?asOf=${encodeURIComponent(asOf)}` : '';
-  const url = `/tiles/${layerId}/${theme}/{z}/{x}/{y}.png${qs}`;
+export function setBaseLayerSource(
+  ctx: MapContext,
+  layerId: number,
+  theme: string,
+  asOf: string | null = null,
+  styleVersion: number | null = null
+): void {
+  // E401 (WE4): URL に ?asOf= を付与
+  // D'201 (WD'2): URL に ?sv={styleVersion} を付与 (SLD cache busting、sld-cache-busting.md 参照)
+  // 両方付く場合は ?sv=N&asOf=YYYY-MM-DD の形。OL は URL 全体をキャッシュキーに含めるので
+  // どちらかが変わると新タイル取得。
+  const params = new URLSearchParams();
+  if (styleVersion !== null) params.set('sv', String(styleVersion));
+  if (asOf) params.set('asOf', asOf);
+  const qs = params.toString();
+  const url = `/tiles/${layerId}/${theme}/{z}/{x}/{y}.png${qs ? '?' + qs : ''}`;
   const source = new XYZ({
     url,
     tileLoadFunction: (tile, src) => {
@@ -41,12 +52,13 @@ export function setBaseLayerSource(ctx: MapContext, layerId: number, theme: stri
   ctx.currentLayerId = layerId;
   ctx.currentTheme = theme;
   ctx.currentAsOf = asOf;
+  ctx.currentStyleVersion = styleVersion;
 }
 
 // D303 (WD3): theme_change envelope を受領した時に呼ぶ
 export function changeTheme(ctx: MapContext, theme: string): void {
   if (ctx.currentLayerId === null) return;
-  setBaseLayerSource(ctx, ctx.currentLayerId, theme, ctx.currentAsOf);
+  setBaseLayerSource(ctx, ctx.currentLayerId, theme, ctx.currentAsOf, ctx.currentStyleVersion);
 }
 
 // E401 (WE4): asOf_change envelope (Host から日付ピッカー値変更通知) を受領した時
@@ -59,9 +71,19 @@ export async function changeAsOf(ctx: MapContext, asOf: string | null): Promise<
 }
 
 // loadFeatures は名前を残しつつ意味を「layer/theme 差替 + extent fit」に拡張
-// E401 (WE4): asOf 引数追加。layer/theme/asOf 全部含めて差替
+// E401 (WE4): asOf 引数追加
+// D'201 (WD'2): styleVersion を /api/layers から取得して URL に伝搬
 export async function loadFeatures(ctx: MapContext, layerId: number, theme: string = 'default', asOf: string | null = null): Promise<void> {
-  setBaseLayerSource(ctx, layerId, theme, asOf);
+  // styleVersion を取得 (キャッシュ済の場合はそれを使う、無ければ /api/layers で取得)
+  let sv: number | null = null;
+  try {
+    const { fetchLayers } = await import('../api/client');
+    const layers = await fetchLayers(asOf ?? undefined);
+    sv = layers.find(l => l.layerId === layerId)?.styleVersion ?? null;
+  } catch (e) {
+    console.warn('[layer] fetchLayers for styleVersion failed', e);
+  }
+  setBaseLayerSource(ctx, layerId, theme, asOf, sv);
   try {
     const ext = await getLayerExtent(layerId, asOf ?? undefined);
     if (ext.extent3857 && ext.count > 0) {
