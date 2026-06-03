@@ -4,6 +4,9 @@
 .api-stderr.log
 .web-stdout.log
 .web-stderr.log
+.winforms-stdout.log
+.winforms-stderr.log
+.smoke-*.png
 
 # PR 本文の一時ファイル
 .pr-body-*.md
