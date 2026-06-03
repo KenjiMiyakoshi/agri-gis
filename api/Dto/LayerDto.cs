@@ -8,5 +8,6 @@ public sealed record LayerDto(
     bool IsShared,
     DateTimeOffset CreatedAt,
     int SchemaVersion,
-    LayerSchemaDto Schema
+    LayerSchemaDto Schema,
+    int StyleVersion
 );

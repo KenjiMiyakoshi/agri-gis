@@ -23,45 +23,62 @@ public static class AdminLayersEndpoints
             var asOfDate = AsOfParser.TryParse(asOf);
             var include = includeDeleted ?? false;
             string sql;
+            // D'101 (WD'1): styleVersion を LEFT JOIN で取得 (現在 active な layer_style_version)
             if (asOfDate is not null)
             {
-                sql = @"SELECT layer_id, layer_name, layer_type, geometry_type,
-                               source_format, source_srid, description,
-                               schema_version, schema_json,
-                               created_by, created_org_id,
-                               created_at, updated_at, deleted_at
-                          FROM layers
-                         WHERE valid_from <= @asof AND @asof < valid_to
+                sql = @"SELECT l.layer_id, l.layer_name, l.layer_type, l.geometry_type,
+                               l.source_format, l.source_srid, l.description,
+                               l.schema_version, l.schema_json,
+                               l.created_by, l.created_org_id,
+                               l.created_at, l.updated_at, l.deleted_at,
+                               COALESCE(lsv.style_version, 1) AS style_version
+                          FROM layers l
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                         WHERE l.valid_from <= @asof AND @asof < l.valid_to
                         UNION ALL
-                        SELECT layer_id, layer_name, layer_type, geometry_type,
-                               source_format, source_srid, description,
-                               schema_version, schema_json,
-                               created_by, created_org_id,
-                               created_at, updated_at, NULL
-                          FROM layer_history
-                         WHERE valid_from <= @asof AND @asof < valid_to
+                        SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.geometry_type,
+                               lh.source_format, lh.source_srid, lh.description,
+                               lh.schema_version, lh.schema_json,
+                               lh.created_by, lh.created_org_id,
+                               lh.created_at, lh.updated_at, NULL,
+                               COALESCE(lsv.style_version, 1) AS style_version
+                          FROM layer_history lh
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = lh.layer_id
+                           AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                         WHERE lh.valid_from <= @asof AND @asof < lh.valid_to
                          ORDER BY layer_id";
             }
             else if (include)
             {
-                sql = @"SELECT layer_id, layer_name, layer_type, geometry_type,
-                               source_format, source_srid, description,
-                               schema_version, schema_json,
-                               created_by, created_org_id,
-                               created_at, updated_at, deleted_at
-                          FROM layers
-                         ORDER BY layer_id";
+                sql = @"SELECT l.layer_id, l.layer_name, l.layer_type, l.geometry_type,
+                               l.source_format, l.source_srid, l.description,
+                               l.schema_version, l.schema_json,
+                               l.created_by, l.created_org_id,
+                               l.created_at, l.updated_at, l.deleted_at,
+                               COALESCE(lsv.style_version, 1) AS style_version
+                          FROM layers l
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_to = '9999-12-31'::date
+                         ORDER BY l.layer_id";
             }
             else
             {
-                sql = @"SELECT layer_id, layer_name, layer_type, geometry_type,
-                               source_format, source_srid, description,
-                               schema_version, schema_json,
-                               created_by, created_org_id,
-                               created_at, updated_at, deleted_at
-                          FROM layers
-                         WHERE valid_to = '9999-12-31'::date AND deleted_at IS NULL
-                         ORDER BY layer_id";
+                sql = @"SELECT l.layer_id, l.layer_name, l.layer_type, l.geometry_type,
+                               l.source_format, l.source_srid, l.description,
+                               l.schema_version, l.schema_json,
+                               l.created_by, l.created_org_id,
+                               l.created_at, l.updated_at, l.deleted_at,
+                               COALESCE(lsv.style_version, 1) AS style_version
+                          FROM layers l
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_to = '9999-12-31'::date
+                         WHERE l.valid_to = '9999-12-31'::date AND l.deleted_at IS NULL
+                         ORDER BY l.layer_id";
             }
             await using var cmd = db.CreateCommand(sql);
             if (asOfDate is not null) cmd.Parameters.AddWithValue("asof", asOfDate.Value);
@@ -417,6 +434,131 @@ public static class AdminLayersEndpoints
             return Results.Ok(new BulkFeaturesResponseDto(InsertedCount: insertedIds.Count, FeatureIds: insertedIds));
         });
 
+        // D'105 (WD'1): GET /api/admin/layers/{layerId}/attributes/{field}/stats?bins=N&method=quantile|equal
+        // 数値属性のカラーランプ自動生成のための breaks 計算。
+        // - quantile: PostgreSQL percentile_cont で等分位 (default)
+        // - equal:    [min, max] を等間隔
+        // field 名は alphanumeric + underscore のみ (SQL injection 防止)
+        group.MapGet("/{layerId:int}/attributes/{field}/stats", async (
+            int layerId, string field, int? bins, string? method, NpgsqlDataSource db) =>
+        {
+            var b = bins ?? 5;
+            if (b < 2 || b > 20)
+            {
+                throw new ValidationException(new[]
+                {
+                    new AttributeErrorDto("bins", "range", "bins must be in [2, 20]")
+                });
+            }
+            var m = (method ?? "quantile").ToLowerInvariant();
+            if (m != "quantile" && m != "equal")
+            {
+                throw new ValidationException(new[]
+                {
+                    new AttributeErrorDto("method", "invalid", "method must be 'quantile' or 'equal'")
+                });
+            }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(field, @"^[a-zA-Z0-9_]{1,64}$"))
+            {
+                throw new ValidationException(new[]
+                {
+                    new AttributeErrorDto("field", "format",
+                        "field must match ^[a-zA-Z0-9_]{1,64}$")
+                });
+            }
+
+            // min/max/count
+            var statsSql = $@"
+                SELECT MIN(v), MAX(v), COUNT(*)
+                  FROM (
+                    SELECT (attributes->>'{field}')::numeric AS v
+                      FROM feature_current
+                     WHERE layer_id = @id
+                       AND attributes ? '{field}'
+                       AND attributes->>'{field}' IS NOT NULL
+                     LIMIT 50000
+                  ) samples";
+            double mn = 0, mx = 0;
+            long cnt = 0;
+            await using (var sc = db.CreateCommand(statsSql))
+            {
+                sc.Parameters.AddWithValue("id", layerId);
+                await using var sr = await sc.ExecuteReaderAsync();
+                if (!await sr.ReadAsync() || sr.IsDBNull(0))
+                {
+                    return Results.Ok(new
+                    {
+                        field,
+                        method = m,
+                        bins = b,
+                        breaks = Array.Empty<double>(),
+                        min = 0.0,
+                        max = 0.0,
+                        count = 0L
+                    });
+                }
+                mn = (double)sr.GetDecimal(0);
+                mx = (double)sr.GetDecimal(1);
+                cnt = sr.GetInt64(2);
+            }
+
+            double[] breaks;
+            if (m == "equal")
+            {
+                breaks = new double[b];
+                for (int i = 0; i < b; i++)
+                {
+                    breaks[i] = mn + (mx - mn) * (i + 1) / b;
+                }
+            }
+            else
+            {
+                var pcts = new double[b];
+                for (int i = 0; i < b; i++)
+                {
+                    pcts[i] = (i + 1.0) / b;
+                }
+                var qSql = $@"
+                    SELECT percentile_cont(@pcts) WITHIN GROUP (ORDER BY v)
+                      FROM (
+                        SELECT (attributes->>'{field}')::numeric AS v
+                          FROM feature_current
+                         WHERE layer_id = @id
+                           AND attributes ? '{field}'
+                           AND attributes->>'{field}' IS NOT NULL
+                         LIMIT 50000
+                      ) samples";
+                await using var qc = db.CreateCommand(qSql);
+                qc.Parameters.AddWithValue("id", layerId);
+                qc.Parameters.AddWithValue("pcts", pcts);
+                var raw = await qc.ExecuteScalarAsync();
+                // percentile_cont は numeric[] を返す。double[] にキャスト
+                if (raw is decimal[] decs)
+                {
+                    breaks = decs.Select(d => (double)d).ToArray();
+                }
+                else if (raw is double[] dbls)
+                {
+                    breaks = dbls;
+                }
+                else
+                {
+                    breaks = Array.Empty<double>();
+                }
+            }
+
+            return Results.Ok(new
+            {
+                field,
+                method = m,
+                bins = b,
+                breaks,
+                min = mn,
+                max = mx,
+                count = cnt
+            });
+        });
+
         return group;
     }
 
@@ -451,13 +593,19 @@ public static class AdminLayersEndpoints
 
     private static async Task<LayerAdminDto> LoadLayerAsync(NpgsqlDataSource db, int layerId)
     {
+        // D'101 (WD'1): styleVersion を LEFT JOIN で取得
         const string sql = @"
-            SELECT layer_id, layer_name, layer_type, geometry_type,
-                   source_format, source_srid, description,
-                   schema_version, schema_json,
-                   created_by, created_org_id,
-                   created_at, updated_at, deleted_at
-              FROM layers WHERE layer_id = @id";
+            SELECT l.layer_id, l.layer_name, l.layer_type, l.geometry_type,
+                   l.source_format, l.source_srid, l.description,
+                   l.schema_version, l.schema_json,
+                   l.created_by, l.created_org_id,
+                   l.created_at, l.updated_at, l.deleted_at,
+                   COALESCE(lsv.style_version, 1) AS style_version
+              FROM layers l
+              LEFT JOIN layer_style_version lsv
+                ON lsv.layer_id = l.layer_id
+               AND lsv.valid_to = '9999-12-31'::date
+             WHERE l.layer_id = @id";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue("id", layerId);
         await using var r = await cmd.ExecuteReaderAsync();
@@ -486,6 +634,7 @@ public static class AdminLayersEndpoints
             CreatedAt:     new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(11), DateTimeKind.Utc)),
             UpdatedAt:     new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(12), DateTimeKind.Utc)),
             DeletedAt:     r.IsDBNull(13) ? null
-                : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc)));
+                : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc)),
+            StyleVersion:  r.GetInt32(14));
     }
 }
