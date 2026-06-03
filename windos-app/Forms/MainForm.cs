@@ -17,15 +17,17 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     private readonly ISessionStore _session;
     private readonly IServiceProvider _sp;
     private BridgeMessenger? _bridge;
-    private IReadOnlyList<LayerDto> _layers = Array.Empty<LayerDto>();
-    // E'203 (WE'2): asOf 状態を AsOfState クラスに委譲 (H5 リファクタの足場)
+    // E'203 (WE'2): asOf 状態を AsOfState クラスに委譲
     private readonly AsOfState _asOf = new();
+    // H5-101 (WH5-1): MainForm から layers 管理 + Unauthorized 復旧経路を切り出し
+    private readonly MainFormController _controller;
 
     public MainForm(IApiClient api, ISessionStore session, IServiceProvider sp)
     {
         _api = api;
         _session = session;
         _sp = sp;
+        _controller = new MainFormController(api, session, _asOf);
         InitializeComponent();
         // WB4 B405 (H4 解消): AttributeEditorControl に IFeatureSaveCoordinator を注入
         attributeEditor.SetCoordinator(this);
@@ -120,32 +122,19 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
 
     // WB5 fix: LayerAdminForm からのインポート/削除後に呼ぶ、または起動時の初期読込で呼ぶ。
     // 現在選択中の layer_id を保持して再選択を試みる。
+    // H5-101 (WH5-1): Controller 経由で layer 取得 + ComboBox 更新は MainForm に残す。
     private async Task ReloadLayersAsync()
     {
         try
         {
             SetStatus("Loading layers...");
-            var prevLayerId = layerCombo.SelectedIndex >= 0 && layerCombo.SelectedIndex < _layers.Count
-                ? (int?)_layers[layerCombo.SelectedIndex].LayerId
+            var layers = _controller.Layers;
+            var prevLayerId = layerCombo.SelectedIndex >= 0 && layerCombo.SelectedIndex < layers.Count
+                ? (int?)layers[layerCombo.SelectedIndex].LayerId
                 : null;
 
-            _layers = await _api.GetLayersAsync(_asOf.Current, CancellationToken.None);
-            layerCombo.Items.Clear();
-            foreach (var l in _layers)
-            {
-                layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
-            }
-            if (_layers.Count == 0)
-            {
-                SetStatus("No layers");
-                return;
-            }
-
-            var restoreIndex = prevLayerId is { } pid
-                ? _layers.ToList().FindIndex(l => l.LayerId == pid)
-                : -1;
-            layerCombo.SelectedIndex = restoreIndex >= 0 ? restoreIndex : 0;
-            SetStatus($"{_layers.Count} layers");
+            var result = await _controller.ReloadAsync(prevLayerId, CancellationToken.None);
+            ApplyReloadResult(result);
         }
         catch (UnauthorizedApiException)
         {
@@ -157,44 +146,54 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         }
     }
 
+    private void ApplyReloadResult(ReloadResult result)
+    {
+        layerCombo.Items.Clear();
+        foreach (var l in result.Layers)
+        {
+            layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
+        }
+        if (result.Layers.Count == 0)
+        {
+            SetStatus("No layers");
+            return;
+        }
+        layerCombo.SelectedIndex = result.RestoreIndex;
+        SetStatus($"{result.Layers.Count} layers");
+    }
+
+    // H5-102 (WH5-1): Unauthorized 復旧経路を Controller 経由に統合 (旧版の reload 二重実装を解消)
     private async Task HandleUnauthorizedAsync()
     {
-        _session.Clear();
         Hide();
-        using var login = _sp.GetRequiredService<LoginForm>();
-        var ok = login.ShowDialog() == DialogResult.OK;
+        var loginSucceeded = _controller.TryRecoverUnauthorizedAsync(
+            showLoginAndReturnSuccess: () =>
+            {
+                using var login = _sp.GetRequiredService<LoginForm>();
+                return login.ShowDialog() == DialogResult.OK;
+            },
+            CancellationToken.None);
+        var ok = await loginSucceeded;
         if (!ok)
         {
             Close();
             return;
         }
         Show();
-        // 認証復旧後にレイヤを再取得
-        try
-        {
-            _layers = await _api.GetLayersAsync(_asOf.Current, CancellationToken.None);
-            layerCombo.Items.Clear();
-            foreach (var l in _layers)
-            {
-                layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
-            }
-            if (_layers.Count > 0) layerCombo.SelectedIndex = 0;
-            ApplyGuestRestriction();
-            SetStatus("Re-authenticated");
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"reload after login failed: {ex.Message}");
-        }
+        // Controller が再 reload した結果を ComboBox に反映 (prev = null で先頭選択)
+        ApplyReloadResult(new ReloadResult(_controller.Layers, _controller.Layers.Count > 0 ? 0 : -1));
+        ApplyGuestRestriction();
+        SetStatus("Re-authenticated");
     }
 
     private void OnLayerComboChanged(object? sender, EventArgs e)
     {
-        if (_bridge is null || layerCombo.SelectedIndex < 0 || layerCombo.SelectedIndex >= _layers.Count)
+        var layers = _controller.Layers;
+        if (_bridge is null || layerCombo.SelectedIndex < 0 || layerCombo.SelectedIndex >= layers.Count)
         {
             return;
         }
-        var layer = _layers[layerCombo.SelectedIndex];
+        var layer = layers[layerCombo.SelectedIndex];
         _bridge.Send("layer_select", new { layerId = layer.LayerId });
         SetStatus($"Layer {layer.LayerId} selected");
     }
