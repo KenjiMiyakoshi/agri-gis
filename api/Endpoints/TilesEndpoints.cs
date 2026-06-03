@@ -21,12 +21,14 @@ public static class TilesEndpoints
     public static RouteGroupBuilder MapTilesEndpoints(this RouteGroupBuilder group)
     {
         group.MapGet("/{layerId:int}/{theme}/{z:int}/{x:int}/{y:int}.png",
-            async (int layerId, string theme, int z, int x, int y, string? asOf,
+            async (int layerId, string theme, int z, int x, int y, string? asOf, string? sv,
                    IHttpClientFactory httpClientFactory,
                    IOptions<GeoServerOptions> geoOpts,
                    CancellationToken ct) =>
         {
             // E205 (WE2): asOf 対応
+            // D'102 (WD'1): sv は URL 一意性のためのみ受領 (API ロジックには使わない、cache key を変える役割)
+            _ = sv;
             var asOfDate = AsOfParser.TryParse(asOf);
             // theme 名 validation
             if (!ThemeNameRegex.IsMatch(theme))
@@ -133,9 +135,10 @@ public sealed class TileFileResult : IResult
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         httpContext.Response.ContentType = "image/png";
+        // D'102 (WD'1): cache busting で URL に ?sv= が入る前提で max-age を 24h + immutable に強化
         httpContext.Response.Headers.CacheControl = _noStore
             ? "no-store, no-cache, must-revalidate"
-            : "max-age=3600, public";
+            : "max-age=86400, public, immutable";
         httpContext.Response.ContentLength = _pngBytes.Length;
         await httpContext.Response.Body.WriteAsync(_pngBytes);
     }
