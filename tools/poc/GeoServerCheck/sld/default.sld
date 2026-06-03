@@ -8,10 +8,27 @@
   <NamedLayer>
     <Name>default</Name>
     <UserStyle>
-      <Title>Phase D - default green (Polygon + Point + Line)</Title>
+      <Title>Phase D - default (geometry-type aware)</Title>
       <FeatureTypeStyle>
+        <!-- Polygon / MultiPolygon: 緑塗り -->
         <Rule>
           <Title>Polygon fill</Title>
+          <ogc:Filter>
+            <ogc:Or>
+              <ogc:PropertyIsEqualTo>
+                <ogc:Function name="geometryType">
+                  <ogc:PropertyName>geom</ogc:PropertyName>
+                </ogc:Function>
+                <ogc:Literal>Polygon</ogc:Literal>
+              </ogc:PropertyIsEqualTo>
+              <ogc:PropertyIsEqualTo>
+                <ogc:Function name="geometryType">
+                  <ogc:PropertyName>geom</ogc:PropertyName>
+                </ogc:Function>
+                <ogc:Literal>MultiPolygon</ogc:Literal>
+              </ogc:PropertyIsEqualTo>
+            </ogc:Or>
+          </ogc:Filter>
           <PolygonSymbolizer>
             <Fill>
               <CssParameter name="fill">#4CAF50</CssParameter>
@@ -23,8 +40,25 @@
             </Stroke>
           </PolygonSymbolizer>
         </Rule>
+        <!-- LineString / MultiLineString: 緑線 -->
         <Rule>
           <Title>Line stroke</Title>
+          <ogc:Filter>
+            <ogc:Or>
+              <ogc:PropertyIsEqualTo>
+                <ogc:Function name="geometryType">
+                  <ogc:PropertyName>geom</ogc:PropertyName>
+                </ogc:Function>
+                <ogc:Literal>LineString</ogc:Literal>
+              </ogc:PropertyIsEqualTo>
+              <ogc:PropertyIsEqualTo>
+                <ogc:Function name="geometryType">
+                  <ogc:PropertyName>geom</ogc:PropertyName>
+                </ogc:Function>
+                <ogc:Literal>MultiLineString</ogc:Literal>
+              </ogc:PropertyIsEqualTo>
+            </ogc:Or>
+          </ogc:Filter>
           <LineSymbolizer>
             <Stroke>
               <CssParameter name="stroke">#1B5E20</CssParameter>
@@ -32,8 +66,25 @@
             </Stroke>
           </LineSymbolizer>
         </Rule>
+        <!-- Point / MultiPoint: 赤丸 -->
         <Rule>
           <Title>Point marker</Title>
+          <ogc:Filter>
+            <ogc:Or>
+              <ogc:PropertyIsEqualTo>
+                <ogc:Function name="geometryType">
+                  <ogc:PropertyName>geom</ogc:PropertyName>
+                </ogc:Function>
+                <ogc:Literal>Point</ogc:Literal>
+              </ogc:PropertyIsEqualTo>
+              <ogc:PropertyIsEqualTo>
+                <ogc:Function name="geometryType">
+                  <ogc:PropertyName>geom</ogc:PropertyName>
+                </ogc:Function>
+                <ogc:Literal>MultiPoint</ogc:Literal>
+              </ogc:PropertyIsEqualTo>
+            </ogc:Or>
+          </ogc:Filter>
           <PointSymbolizer>
             <Graphic>
               <Mark>
