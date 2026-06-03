@@ -33,8 +33,8 @@ public partial class ImportWizardForm : Form
         new() { Label = "Shapefile ZIP",                             FormatValue = "shapefile" },
         // C'104 (WC'1): MIF/MID 解禁
         new() { Label = "MapInfo MIF/MID ZIP",                       FormatValue = "mif" },
-        // C'204 (WC'2 予定): TAB は WC'2 で解禁
-        new() { Label = "MapInfo TAB (Phase C' WC'2 対応予定)",      FormatValue = null },
+        // C'204 (WC'2): TAB 解禁
+        new() { Label = "MapInfo TAB ZIP",                           FormatValue = "tab" },
     };
 
     public ImportWizardForm(IApiClient api,
@@ -140,13 +140,14 @@ public partial class ImportWizardForm : Form
         "csv" => "CSV|*.csv|All|*.*",
         "shapefile" => "Shapefile ZIP|*.zip|All|*.*",
         "mif" => "MapInfo MIF/MID ZIP|*.zip|All|*.*",  // C'104 (WC'1)
+        "tab" => "MapInfo TAB ZIP|*.zip|All|*.*",      // C'204 (WC'2)
         _ => "All|*.*"
     };
 
     private void UpdateFileFilter()
     {
         // OpenFileDialog は呼び出し時にだけ参照されるので、UI 側で表示だけ整える
-        filePathHint.Text = (_vm.SourceFormat == "shapefile" || _vm.SourceFormat == "mif")
+        filePathHint.Text = (_vm.SourceFormat == "shapefile" || _vm.SourceFormat == "mif" || _vm.SourceFormat == "tab")
             ? "ZIP ファイル:" : "ファイル:";
     }
 
