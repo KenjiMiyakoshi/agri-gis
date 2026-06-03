@@ -20,19 +20,22 @@ public sealed class CpgFileResolver : IEncodingResolver
         _options = options;
     }
 
-    public string Resolve(ShapefilePackage package)
+    public string Resolve(IImportPackage package)
     {
         var fallback = _options.Value.DefaultDbfEncoding;
         if (string.IsNullOrEmpty(fallback)) fallback = "CP932";
 
-        if (string.IsNullOrEmpty(package.CpgPath) || !File.Exists(package.CpgPath))
+        // C'101 (WC'1): Shapefile 以外 (MIF/TAB) は CpgPath を持たないため fallback で返す。
+        // MIF/TAB の CharSet ヘッダ経路は Phase C' WC'3 (UcsDetect + MifTabCharSetParser) で対応。
+        if (package is not ShapefilePackage shp ||
+            string.IsNullOrEmpty(shp.CpgPath) || !File.Exists(shp.CpgPath))
         {
             return fallback;
         }
 
         try
         {
-            var raw = File.ReadAllText(package.CpgPath);
+            var raw = File.ReadAllText(shp.CpgPath);
             return CpgFileParser.Parse(raw) ?? fallback;
         }
         catch (IOException)

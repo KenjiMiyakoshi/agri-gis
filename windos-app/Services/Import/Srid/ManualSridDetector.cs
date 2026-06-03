@@ -14,6 +14,6 @@ public sealed class ManualSridDetector : ISridDetector
         _srid = srid;
     }
 
-    public ValueTask<SridDetectionResult> DetectAsync(ShapefilePackage package, CancellationToken ct)
+    public ValueTask<SridDetectionResult> DetectAsync(IImportPackage package, CancellationToken ct)
         => ValueTask.FromResult(new SridDetectionResult(_srid, SridResolutionState.Detected));
 }

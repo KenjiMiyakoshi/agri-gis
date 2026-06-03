@@ -21,7 +21,7 @@ public sealed class GdalLayerSourceTransformTests
 {
     private sealed class StubEncodingResolver : IEncodingResolver
     {
-        public string Resolve(ShapefilePackage package) => "UTF-8";
+        public string Resolve(IImportPackage package) => "UTF-8";
     }
 
     [Fact]

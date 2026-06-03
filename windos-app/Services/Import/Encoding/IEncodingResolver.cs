@@ -17,6 +17,8 @@ public interface IEncodingResolver
     /// <summary>
     /// .cpg ファイル内容 + appsettings 既定値 から文字コード名を確定する。
     /// 戻り値は OGR Open option 形式の文字列 (例: "CP932" / "UTF-8" / "EUC-JP")。
+    /// C'101 (WC'1): IImportPackage 受け取りに変更。MIF/TAB の場合は実装側で
+    /// is ShapefilePackage ガード or 各 Package 固有プロパティ参照で分岐する。
     /// </summary>
-    string Resolve(ShapefilePackage package);
+    string Resolve(IImportPackage package);
 }

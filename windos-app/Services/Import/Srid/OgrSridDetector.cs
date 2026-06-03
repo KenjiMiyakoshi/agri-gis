@@ -16,17 +16,19 @@ public sealed class OgrSridDetector : ISridDetector
         _options = options;
     }
 
-    public ValueTask<SridDetectionResult> DetectAsync(ShapefilePackage package, CancellationToken ct)
+    public ValueTask<SridDetectionResult> DetectAsync(IImportPackage package, CancellationToken ct)
     {
-        // .prj 不在は即 fallback
-        if (string.IsNullOrEmpty(package.PrjPath) || !File.Exists(package.PrjPath))
+        // C'101 (WC'1): Shapefile 以外 (MIF/TAB) は PrjPath を持たない → 即 fallback
+        // (MIF/TAB の CoordSys 行ベース SRID 解決は Phase C' WC'2 SridCatalog で対応)
+        if (package is not ShapefilePackage shp ||
+            string.IsNullOrEmpty(shp.PrjPath) || !File.Exists(shp.PrjPath))
         {
             return ValueTask.FromResult(ApplyFallback());
         }
 
         try
         {
-            var wkt = File.ReadAllText(package.PrjPath);
+            var wkt = File.ReadAllText(shp.PrjPath);
             if (string.IsNullOrWhiteSpace(wkt))
             {
                 return ValueTask.FromResult(ApplyFallback());

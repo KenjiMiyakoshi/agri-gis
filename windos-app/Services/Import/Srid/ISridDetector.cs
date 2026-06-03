@@ -28,5 +28,6 @@ public sealed record SridDetectionResult(int? Srid, SridResolutionState State);
 
 public interface ISridDetector
 {
-    ValueTask<SridDetectionResult> DetectAsync(ShapefilePackage package, CancellationToken ct);
+    // C'101 (WC'1): IImportPackage 受け取りに変更 (MIF/TAB 対応)
+    ValueTask<SridDetectionResult> DetectAsync(IImportPackage package, CancellationToken ct);
 }

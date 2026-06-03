@@ -10,7 +10,7 @@ namespace AgriGis.Desktop.Services.Import.Packages;
 //   - .shp は必須、複数同梱は InvalidDataException
 //   - .shx / .dbf / .prj / .cpg は任意 (不在は警告のみ、MissingOptionalExtensions で公開)
 //   - IAsyncDisposable で再帰削除
-public sealed class ShapefilePackage : IAsyncDisposable
+public sealed class ShapefilePackage : IImportPackage
 {
     private readonly string _tempRoot;
 
@@ -19,6 +19,10 @@ public sealed class ShapefilePackage : IAsyncDisposable
     public string? DbfPath { get; init; }
     public string? PrjPath { get; init; }
     public string? CpgPath { get; init; }
+
+    // C'101 (WC'1): IImportPackage 実装。ShpPath は後方互換で残置。
+    public string PrimaryPath => ShpPath;
+    public IReadOnlyList<string> MissingOptional => MissingOptionalExtensions;
 
     /// <summary>
     /// 任意 sidecar (.shx / .dbf / .prj / .cpg) で zip 内に見つからなかった拡張子のリスト。

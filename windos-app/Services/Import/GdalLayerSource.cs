@@ -25,7 +25,8 @@ namespace AgriGis.Desktop.Services.Import;
 //     IAsyncEnumerable で逐次 yield
 public sealed class GdalLayerSource : ILayerSource
 {
-    private readonly ShapefilePackage _package;
+    // C'101 (WC'1): IImportPackage 受け取りに変更 (Shapefile / MIF / TAB 共通)
+    private readonly IImportPackage _package;
     private readonly ISridDetector _sridDetector;
     private readonly IEncodingResolver _encodingResolver;
     private readonly string _sourceFormat;
@@ -45,7 +46,7 @@ public sealed class GdalLayerSource : ILayerSource
     public int SkippedFeatureCount { get; private set; }
 
     public GdalLayerSource(
-        ShapefilePackage package,
+        IImportPackage package,
         ISridDetector sridDetector,
         IEncodingResolver encodingResolver,
         string sourceFormat = "shapefile")
@@ -282,9 +283,10 @@ public sealed class GdalLayerSource : ILayerSource
         //    プロセス環境変数 SHAPE_ENCODING を使わずにエンコーディングを指定できる
         //    Design 決定 6 と整合)
         var encoding = _encodingResolver.Resolve(_package);
-        if (string.IsNullOrEmpty(_package.CpgPath))
+        // C'101 (WC'1): .cpg fallback 書き込みは Shapefile 固有 (MIF/TAB は不要)
+        if (_package is ShapefilePackage shpForCpg && string.IsNullOrEmpty(shpForCpg.CpgPath))
         {
-            var generated = Path.ChangeExtension(_package.ShpPath, ".cpg");
+            var generated = Path.ChangeExtension(shpForCpg.ShpPath, ".cpg");
             await File.WriteAllTextAsync(generated, encoding, ct);
         }
 
@@ -299,18 +301,18 @@ public sealed class GdalLayerSource : ILayerSource
         if (driver is null)
             throw new InvalidOperationException($"OGR driver not found: {driverName}");
 
-        _dataSource = driver.Open(_package.ShpPath, 0);  // 0 = read-only
+        _dataSource = driver.Open(_package.PrimaryPath, 0);  // 0 = read-only
 
         if (_dataSource is null)
         {
             throw new InvalidOperationException(
-                $"Failed to open shapefile: {_package.ShpPath} (encoding={encoding})");
+                $"Failed to open {_sourceFormat}: {_package.PrimaryPath} (encoding={encoding})");
         }
 
-        if (_package.MissingOptionalExtensions.Count > 0)
+        if (_package.MissingOptional.Count > 0)
         {
             Trace.WriteLine(
-                $"[GdalLayerSource] missing optional sidecars: {string.Join(',', _package.MissingOptionalExtensions)}");
+                $"[GdalLayerSource] missing optional sidecars: {string.Join(',', _package.MissingOptional)}");
         }
 
         // 4. source EPSG → 4326 への CoordinateTransformation を準備する。
