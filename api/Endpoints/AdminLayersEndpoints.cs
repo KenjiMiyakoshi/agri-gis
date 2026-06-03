@@ -24,13 +24,14 @@ public static class AdminLayersEndpoints
             var include = includeDeleted ?? false;
             string sql;
             // D'101 (WD'1): styleVersion を LEFT JOIN で取得 (現在 active な layer_style_version)
+            // E'104 (WE'1): SELECT 句から l.deleted_at 削除、WHERE から AND l.deleted_at IS NULL 削除
             if (asOfDate is not null)
             {
                 sql = @"SELECT l.layer_id, l.layer_name, l.layer_type, l.geometry_type,
                                l.source_format, l.source_srid, l.description,
                                l.schema_version, l.schema_json,
                                l.created_by, l.created_org_id,
-                               l.created_at, l.updated_at, l.deleted_at,
+                               l.created_at, l.updated_at,
                                COALESCE(lsv.style_version, 1) AS style_version
                           FROM layers l
                           LEFT JOIN layer_style_version lsv
@@ -42,7 +43,7 @@ public static class AdminLayersEndpoints
                                lh.source_format, lh.source_srid, lh.description,
                                lh.schema_version, lh.schema_json,
                                lh.created_by, lh.created_org_id,
-                               lh.created_at, lh.updated_at, NULL,
+                               lh.created_at, lh.updated_at,
                                COALESCE(lsv.style_version, 1) AS style_version
                           FROM layer_history lh
                           LEFT JOIN layer_style_version lsv
@@ -57,7 +58,7 @@ public static class AdminLayersEndpoints
                                l.source_format, l.source_srid, l.description,
                                l.schema_version, l.schema_json,
                                l.created_by, l.created_org_id,
-                               l.created_at, l.updated_at, l.deleted_at,
+                               l.created_at, l.updated_at,
                                COALESCE(lsv.style_version, 1) AS style_version
                           FROM layers l
                           LEFT JOIN layer_style_version lsv
@@ -71,13 +72,13 @@ public static class AdminLayersEndpoints
                                l.source_format, l.source_srid, l.description,
                                l.schema_version, l.schema_json,
                                l.created_by, l.created_org_id,
-                               l.created_at, l.updated_at, l.deleted_at,
+                               l.created_at, l.updated_at,
                                COALESCE(lsv.style_version, 1) AS style_version
                           FROM layers l
                           LEFT JOIN layer_style_version lsv
                             ON lsv.layer_id = l.layer_id
                            AND lsv.valid_to = '9999-12-31'::date
-                         WHERE l.valid_to = '9999-12-31'::date AND l.deleted_at IS NULL
+                         WHERE l.valid_to = '9999-12-31'::date
                          ORDER BY l.layer_id";
             }
             await using var cmd = db.CreateCommand(sql);
@@ -158,7 +159,7 @@ public static class AdminLayersEndpoints
             else
             {
                 await using var vcmd = db.CreateCommand(
-                    "SELECT version FROM layers WHERE layer_id = @id AND valid_to = '9999-12-31'::date AND deleted_at IS NULL");
+                    "SELECT version FROM layers WHERE layer_id = @id AND valid_to = '9999-12-31'::date");
                 vcmd.Parameters.AddWithValue("id", layerId);
                 var v = await vcmd.ExecuteScalarAsync();
                 if (v is null) throw new NotFoundException($"layer not found: {layerId}");
@@ -246,7 +247,7 @@ public static class AdminLayersEndpoints
             // 409: 既に running ジョブあり、または layer 存在/論理削除確認
             await using var conn = await db.OpenConnectionAsync();
             await using (var lcmd = new NpgsqlCommand(
-                "SELECT 1 FROM layers WHERE layer_id = @id AND deleted_at IS NULL", conn))
+                "SELECT 1 FROM layers WHERE layer_id = @id AND valid_to = '9999-12-31'::date", conn))
             {
                 lcmd.Parameters.AddWithValue("id", layerId);
                 if (await lcmd.ExecuteScalarAsync() is null)
@@ -379,7 +380,7 @@ public static class AdminLayersEndpoints
             LayerSchemaDto schema;
             int schemaVersion;
             await using (var sc = new NpgsqlCommand(
-                "SELECT schema_version, schema_json FROM layers WHERE layer_id = @id AND deleted_at IS NULL", conn))
+                "SELECT schema_version, schema_json FROM layers WHERE layer_id = @id AND valid_to = '9999-12-31'::date", conn))
             {
                 sc.Parameters.AddWithValue("id", layerId);
                 await using var sr = await sc.ExecuteReaderAsync();
@@ -594,12 +595,13 @@ public static class AdminLayersEndpoints
     private static async Task<LayerAdminDto> LoadLayerAsync(NpgsqlDataSource db, int layerId)
     {
         // D'101 (WD'1): styleVersion を LEFT JOIN で取得
+        // E'104 (WE'1): l.deleted_at 削除
         const string sql = @"
             SELECT l.layer_id, l.layer_name, l.layer_type, l.geometry_type,
                    l.source_format, l.source_srid, l.description,
                    l.schema_version, l.schema_json,
                    l.created_by, l.created_org_id,
-                   l.created_at, l.updated_at, l.deleted_at,
+                   l.created_at, l.updated_at,
                    COALESCE(lsv.style_version, 1) AS style_version
               FROM layers l
               LEFT JOIN layer_style_version lsv
@@ -619,6 +621,7 @@ public static class AdminLayersEndpoints
         var schema = JsonSerializer.Deserialize<LayerSchemaDto>(schemaJson, JsonOpts.Default)
                      ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>());
 
+        // E'104 (WE'1): DeletedAt 削除、StyleVersion を index 13 に
         return new LayerAdminDto(
             LayerId:       r.GetInt32(0),
             LayerName:     r.GetString(1),
@@ -633,8 +636,6 @@ public static class AdminLayersEndpoints
             CreatedOrgId:  r.IsDBNull(10) ? null : r.GetInt32(10),
             CreatedAt:     new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(11), DateTimeKind.Utc)),
             UpdatedAt:     new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(12), DateTimeKind.Utc)),
-            DeletedAt:     r.IsDBNull(13) ? null
-                : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc)),
-            StyleVersion:  r.GetInt32(14));
+            StyleVersion:  r.GetInt32(13));
     }
 }

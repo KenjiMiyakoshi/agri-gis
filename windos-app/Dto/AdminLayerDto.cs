@@ -17,8 +17,9 @@ public sealed record LayerAdminDto(
     Guid? CreatedBy,
     int? CreatedOrgId,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt,
-    DateTimeOffset? DeletedAt);
+    DateTimeOffset UpdatedAt);
+// E'102 (WE'1): DeletedAt 列 DROP。論理削除判定は valid_to <> '9999-12-31'。
+// 履歴情報は layer_history.archived_at で代替。
 
 public sealed record CreateLayerRequestDto(
     string LayerName,

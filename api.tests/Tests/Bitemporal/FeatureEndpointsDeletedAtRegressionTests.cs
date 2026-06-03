@@ -34,7 +34,7 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
         {
             await conn.OpenAsync();
             await using var cmd = new NpgsqlCommand(
-                "UPDATE layers SET deleted_at = now() WHERE layer_id = 2", conn);
+                "UPDATE layers SET valid_to = CURRENT_DATE WHERE layer_id = 2", conn);
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -85,7 +85,7 @@ public sealed class FeatureEndpointsDeletedAtRegressionTests : IAsyncLifetime
         {
             await conn.OpenAsync();
             await using var cmd = new NpgsqlCommand(
-                "UPDATE layers SET deleted_at = now() WHERE layer_id = 2", conn);
+                "UPDATE layers SET valid_to = CURRENT_DATE WHERE layer_id = 2", conn);
             await cmd.ExecuteNonQueryAsync();
         }
 
