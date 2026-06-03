@@ -1,6 +1,6 @@
 # agri-gis Phase E Wave 分割計画 (案 P)
 
-`PHASE_E_ISSUES_INDEX.md` の 17 Issue を、Phase A WA1〜WA5 / Phase B WB0〜WB5 / Phase C WC0〜WC4 / Phase D WD0〜WD5 と同じ流儀で Wave 分割。**6 Wave 構成 (WE0〜WE5)**、約 10.0 人日。
+`PHASE_E_ISSUES_INDEX.md` の 20 Issue を、Phase A WA1〜WA5 / Phase B WB0〜WB5 / Phase C WC0〜WC4 / Phase D WD0〜WD5 と同じ流儀で Wave 分割。**6 Wave 構成 (WE0〜WE5)**、約 10.0 人日。
 
 ## 0. 運用前提 (Phase A/B/C/D 踏襲)
 
@@ -22,7 +22,7 @@
 | **WE3** | GeoServer (feature_asof featureType + setup.ps1 拡張 + TilesEndpoints asOf 分岐) | E301, E302 | 1.0d | WE2 (TilesEndpoints) | E301 → E302 直列 |
 | **WE4** | UI (WinForms asOfPicker + WebGIS asOf 配線) | E401, E402 | 1.5d | WE3 完了 (動作確認後) | E401 (WebGIS) と E402 (WinForms) 並列可 |
 | **WE5** | テスト + Docs | E501, E502, E503, E504 | 2.0d | WE4 完了 | E501-E503 並列 → E504 |
-| | **合計** | **17 Issue** | **約 10.0d** | | |
+| | **合計** | **20 Issue** | **約 10.0d** | | |
 
 クリティカルパス: WE0 (1.5d) → WE1 (1.5d 直列分) → WE2 (1.5d) → WE3 (1.0d) → WE4 (1.0d) → WE5 (1.0d 直列分) ≒ **7.5 営業日 + バッファ**。並列度を最大化すれば 7 営業日。
 

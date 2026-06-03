@@ -2,12 +2,12 @@
 
 `PHASE_E_DESIGN_P.md` 分割。`E1xx`=PoC/DB / `E2xx`=API / `E3xx`=GeoServer / `E4xx`=UI / `E5xx`=Tests/Docs。S=0.3d / M=0.5-0.7d。
 
-## 一覧 (17 Issue / 約 10.0d)
+## 一覧 (20 Issue / 約 10.0d)
 
-| # | タイトル | 工数 | 主担当 | 依存 |
-|---|---|---|---|---|
-| E100 | `feature_asof` view 性能 PoC (50 万件 fixture × z=15 < 500ms) (Gate) | M(1.0d) | infra/db | — |
-| E101 | DB migration `0E01_layer_history.sql` (Phase A feature_history 同型) | S(0.3d) | db | E100 |
+| # | GH | タイトル | 工数 | 主担当 | 依存 |
+|---|---|---|---|---|---|
+| E100 | [#196](https://github.com/KenjiMiyakoshi/agri-gis/issues/196) | `feature_asof` view 性能 PoC (Gate) | M(1.0d) | infra/db | — |
+| E101 | [#197](https://github.com/KenjiMiyakoshi/agri-gis/issues/197) | `0E01_layer_history.sql` (Phase A feature_history 同型) | S(0.3d) | db | E100 |
 | E102 | DB migration `0E02_layers_valid_from_to.sql` (列追加 + backfill) | S(0.4d) | db | E100 |
 | E103 | DB migration `0E03_layer_style_version.sql` (layer_schema_version 同型) | S(0.3d) | db | E100 |
 | E104 | DB function `0E04_fn_layer_update.sql` (PATCH 用、楽観ロック + history 退避 + audit_log) | M(0.7d) | db | E101, E102 |
