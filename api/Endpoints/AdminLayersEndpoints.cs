@@ -181,9 +181,9 @@ public static class AdminLayersEndpoints
             {
                 throw new NotFoundException($"layer not found: {layerId}");
             }
-            catch (PostgresException pe) when (pe.SqlState == "P0001" && pe.Message.Contains("optimistic_lock"))
+            catch (PostgresException pe) when (pe.SqlState == "P0001")
             {
-                return Results.Conflict(new { title = "optimistic lock violation", layerId, expectedVersion });
+                return Results.Conflict(new { title = "optimistic lock violation", layerId, expectedVersion, detail = pe.Message });
             }
 
             var dto = await LoadLayerAsync(db, layerId);

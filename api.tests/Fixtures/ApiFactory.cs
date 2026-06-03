@@ -1,5 +1,8 @@
+using AgriGis.Api.Auth;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AgriGis.Api.Tests.Fixtures;
 
@@ -32,5 +35,18 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("AGRI_GIS_SKIP_BOOTSTRAP", "1");
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:AgriGis", _connectionString);
+
+        // E501 (WE5): IGeoServerStyleSync を fake に差し替え (テスト環境では GeoServer なし)
+        builder.ConfigureTestServices(services =>
+        {
+            services.AddScoped<IGeoServerStyleSync, FakeGeoServerStyleSync>();
+        });
     }
+}
+
+// E501 (WE5): GeoServer 同期は常に成功扱い (テスト用)
+internal sealed class FakeGeoServerStyleSync : IGeoServerStyleSync
+{
+    public Task<bool> PushStyleAsync(int layerId, string themeName, string sldXml, CancellationToken ct)
+        => Task.FromResult(true);
 }
