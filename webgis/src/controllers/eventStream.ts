@@ -34,18 +34,16 @@ export function startEventStream(ctx: MapContext, layerId: number): void {
     // 短間隔連打を debounce 500ms
     if (debounceTimer !== null) window.clearTimeout(debounceTimer);
     debounceTimer = window.setTimeout(async () => {
-      // 注: ctx.currentStyleVersion + LayerDto.styleVersion + setBaseLayerSource の sv 引数は
-      // Phase D' WD'2 (#224) で導入される。WD'3 単独ではビルド通らないため as any で逃がす。
-      const ctxAny = ctx as any;
-      let sv: number | null = ev.styleVersion ?? ctxAny.currentStyleVersion ?? null;
+      let sv: number | null = ev.styleVersion ?? ctx.currentStyleVersion;
       if (ev.reason === 'feature') {
+        // feature 編集の場合は style_version 不変だが、URL 一意性のため再取得
         try {
           const layers = await fetchLayers(ctx.currentAsOf ?? undefined);
-          sv = (layers.find(l => l.layerId === layerId) as any)?.styleVersion ?? sv;
-        } catch { }
+          sv = layers.find(l => l.layerId === layerId)?.styleVersion ?? sv;
+        } catch { /* ignore */ }
       }
-      ctxAny.currentStyleVersion = sv;
-      (setBaseLayerSource as any)(ctx, ctx.currentLayerId!, ctx.currentTheme, ctx.currentAsOf, sv);
+      ctx.currentStyleVersion = sv;
+      setBaseLayerSource(ctx, ctx.currentLayerId!, ctx.currentTheme, ctx.currentAsOf, sv);
     }, 500);
   });
   currentSource.onerror = (e) => {
