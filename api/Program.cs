@@ -76,6 +76,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         // 同 token を持っていても logout 済なら 401。
         o.Events = new JwtBearerEvents
         {
+            // D'301 (WD'3): EventSource は Authorization ヘッダを送れないため、
+            // ?access_token= からも JWT を受領 (SSE 経路 /api/events のみ用途想定)
+            OnMessageReceived = ctx =>
+            {
+                if (string.IsNullOrEmpty(ctx.Token))
+                {
+                    var p = ctx.HttpContext.Request.Path.Value;
+                    if (p != null && p.StartsWith("/api/events/"))
+                    {
+                        var qsToken = ctx.HttpContext.Request.Query["access_token"].ToString();
+                        if (!string.IsNullOrEmpty(qsToken)) ctx.Token = qsToken;
+                    }
+                }
+                return Task.CompletedTask;
+            },
             OnTokenValidated = async ctx =>
             {
                 var raw = ctx.Principal?.FindFirst("sid_session")?.Value;
@@ -111,6 +126,13 @@ if (!IsTestEnvironment(builder))
     builder.Services.AddHostedService<InitialAdminBootstrap>();
 }
 
+// D'301 (WD'3): LayerInvalidationBroker (LISTEN/NOTIFY → SSE)
+builder.Services.AddSingleton<AgriGis.Api.Services.PostgresLayerInvalidationBroker>();
+builder.Services.AddSingleton<AgriGis.Api.Services.ILayerInvalidationBroker>(sp =>
+    sp.GetRequiredService<AgriGis.Api.Services.PostgresLayerInvalidationBroker>());
+builder.Services.AddHostedService(sp =>
+    sp.GetRequiredService<AgriGis.Api.Services.PostgresLayerInvalidationBroker>());
+
 var app = builder.Build();
 
 // A204: middleware 順序 — CORS → Authentication → Authorization → RequestContext → ProblemDetails
@@ -142,6 +164,9 @@ tilesGroup.MapTilesSelectionEndpoint();
 
 // D202 (WD2): POST /api/selection + DELETE /api/selection/{sid}
 app.MapGroup("/api/selection").MapSelectionEndpoints().RequireAuthorization();
+
+// D'301 (WD'3): SSE for layer invalidation events
+app.MapGroup("/api/events").MapEventsEndpoints().RequireAuthorization();
 
 app.Run();
 
