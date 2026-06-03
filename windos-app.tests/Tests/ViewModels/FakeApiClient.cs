@@ -5,6 +5,7 @@ namespace AgriGis.Desktop.Tests.Tests.ViewModels;
 
 // B505 (WB5): IApiClient の手書き Fake (Moq 不採用、依存最小化のため)。
 // 各メソッドのコールカウントと結果を制御。
+// E'201 (WE'2): asOf 引数追加 + BatchUpdateFeaturesAsync stub 追加。
 public sealed class FakeApiClient : IApiClient
 {
     public int CreateLayerCalls;
@@ -20,11 +21,10 @@ public sealed class FakeApiClient : IApiClient
 
     public Task<LoginResponseDto> LoginAsync(string loginId, string password, CancellationToken ct)
         => throw new NotImplementedException();
-    public Task<IReadOnlyList<LayerDto>> GetLayersAsync(CancellationToken ct)
+    public Task<IReadOnlyList<LayerDto>> GetLayersAsync(DateOnly? asOf, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<LayerDto>>(Array.Empty<LayerDto>());
-    public Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, CancellationToken ct)
+    public Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, DateOnly? asOf, CancellationToken ct)
         => throw new NotImplementedException();
-    // D205 (WD2): GetFeaturesAsync は interface から削除済
     public Task<FeatureDto> GetFeatureAsync(Guid entityId, DateOnly? asOf, CancellationToken ct)
         => throw new NotImplementedException();
     public Task<CreateFeatureResultDto> CreateFeatureAsync(CreateFeatureRequestDto req, CancellationToken ct)
@@ -34,8 +34,7 @@ public sealed class FakeApiClient : IApiClient
     public Task DeleteFeatureAsync(Guid entityId, CancellationToken ct)
         => throw new NotImplementedException();
 
-    // AdminLayers + import-jobs + bulk
-    public Task<IReadOnlyList<LayerAdminDto>> ListLayersAdminAsync(bool includeDeleted, CancellationToken ct)
+    public Task<IReadOnlyList<LayerAdminDto>> ListLayersAdminAsync(bool includeDeleted, DateOnly? asOf, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<LayerAdminDto>>(Array.Empty<LayerAdminDto>());
 
     public Task<LayerAdminDto> CreateLayerAsync(CreateLayerRequestDto req, CancellationToken ct)
@@ -90,7 +89,6 @@ public sealed class FakeApiClient : IApiClient
         return Task.FromResult(res);
     }
 
-    // D401 (WD4): Phase D 新メソッド (テスト用 stub)
     public Task<CreateSelectionResponseDto> CreateSelectionAsync(
         IReadOnlyList<Guid> entityIds, string? colorHex, CancellationToken ct)
         => Task.FromResult(new CreateSelectionResponseDto(Guid.NewGuid(), "session", entityIds.Count));
@@ -101,10 +99,18 @@ public sealed class FakeApiClient : IApiClient
     public Task LogoutAsync(CancellationToken ct)
         => Task.CompletedTask;
 
-    public Task<LayerStyleDto> GetLayerStyleAsync(int layerId, CancellationToken ct)
+    public Task<LayerStyleDto> GetLayerStyleAsync(int layerId, DateOnly? asOf, CancellationToken ct)
         => Task.FromResult(new LayerStyleDto(
             System.Text.Json.JsonDocument.Parse("{\"themes\":{}}").RootElement.Clone()));
 
     public Task<LayerStyleDto> UpdateLayerStyleAsync(int layerId, LayerStyleDto style, CancellationToken ct)
         => Task.FromResult(style);
+
+    // E'201 (WE'2): BatchUpdateFeaturesAsync stub
+    public Task<FeatureBatchUpdateResponseDto> BatchUpdateFeaturesAsync(
+        FeatureBatchUpdateRequestDto req, CancellationToken ct)
+        => Task.FromResult(new FeatureBatchUpdateResponseDto(
+            Results: req.EntityIds.Select((id, i) => new FeatureBatchUpdateResultDto(
+                id, req.IfMatchVersions[i] + 1, DateOnly.FromDateTime(DateTime.UtcNow))).ToList(),
+            Count: req.EntityIds.Count));
 }

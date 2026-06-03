@@ -36,7 +36,7 @@ public partial class LayerAdminForm : Form
         try
         {
             statusLabel.Text = "Loading...";
-            var list = await _api.ListLayersAdminAsync(includeDeleted: false, CancellationToken.None);
+            var list = await _api.ListLayersAdminAsync(includeDeleted: false, asOf: null, CancellationToken.None);
             _layers = new BindingList<LayerAdminDto>(list.ToList());
             grid.DataSource = _layers;
             statusLabel.Text = $"{_layers.Count} layers";
