@@ -14,6 +14,8 @@ export interface MapContext {
   // 現在表示中の layer/theme 状態 (theme_change envelope で差替時に参照)
   currentLayerId: number | null;
   currentTheme: string;
+  // E401 (WE4): 現在の asOf (YYYY-MM-DD)。null = 現在 (= valid_to='9999-12-31')
+  currentAsOf: string | null;
 }
 
 // hotfix 2件目 (2026-06-03 朝の動作確認):
@@ -56,6 +58,7 @@ export function createMap(targetId: string): MapContext {
     baseLayer,
     selectionLayer,
     currentLayerId: null,
-    currentTheme: DEFAULT_THEME
+    currentTheme: DEFAULT_THEME,
+    currentAsOf: null
   };
 }

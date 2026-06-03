@@ -5,8 +5,11 @@ import { fetchLayers, getCurrentAccessToken, getLayerExtent } from '../api/clien
 // D301 (WD3): VectorLayer 経路を廃止し TileLayer(XYZ) で /tiles/{layerId}/{theme}/{z}/{x}/{y}.png を参照
 // tileLoadFunction で Authorization: Bearer {jwt} を付与する。jwt は api/client.ts setAccessToken で更新される。
 
-export function setBaseLayerSource(ctx: MapContext, layerId: number, theme: string): void {
-  const url = `/tiles/${layerId}/${theme}/{z}/{x}/{y}.png`;
+export function setBaseLayerSource(ctx: MapContext, layerId: number, theme: string, asOf: string | null = null): void {
+  // E401 (WE4): URL に ?asOf= を付与。OL は ?xxx 部分も内部キャッシュキーに含めるので
+  // asOf 切替時に source 自体を作り直すことで cache invalidation。
+  const qs = asOf ? `?asOf=${encodeURIComponent(asOf)}` : '';
+  const url = `/tiles/${layerId}/${theme}/{z}/{x}/{y}.png${qs}`;
   const source = new XYZ({
     url,
     tileLoadFunction: (tile, src) => {
@@ -37,20 +40,30 @@ export function setBaseLayerSource(ctx: MapContext, layerId: number, theme: stri
   ctx.baseLayer.setSource(source);
   ctx.currentLayerId = layerId;
   ctx.currentTheme = theme;
+  ctx.currentAsOf = asOf;
 }
 
 // D303 (WD3): theme_change envelope を受領した時に呼ぶ
 export function changeTheme(ctx: MapContext, theme: string): void {
   if (ctx.currentLayerId === null) return;
-  setBaseLayerSource(ctx, ctx.currentLayerId, theme);
+  setBaseLayerSource(ctx, ctx.currentLayerId, theme, ctx.currentAsOf);
+}
+
+// E401 (WE4): asOf_change envelope (Host から日付ピッカー値変更通知) を受領した時
+export async function changeAsOf(ctx: MapContext, asOf: string | null): Promise<void> {
+  if (ctx.currentLayerId === null) {
+    ctx.currentAsOf = asOf;
+    return;
+  }
+  await loadFeatures(ctx, ctx.currentLayerId, ctx.currentTheme, asOf);
 }
 
 // loadFeatures は名前を残しつつ意味を「layer/theme 差替 + extent fit」に拡張
-// hotfix 2件目: layer 選択時に extent を取得して view.fit で自動 zoom
-export async function loadFeatures(ctx: MapContext, layerId: number, theme: string = 'default'): Promise<void> {
-  setBaseLayerSource(ctx, layerId, theme);
+// E401 (WE4): asOf 引数追加。layer/theme/asOf 全部含めて差替
+export async function loadFeatures(ctx: MapContext, layerId: number, theme: string = 'default', asOf: string | null = null): Promise<void> {
+  setBaseLayerSource(ctx, layerId, theme, asOf);
   try {
-    const ext = await getLayerExtent(layerId);
+    const ext = await getLayerExtent(layerId, asOf ?? undefined);
     if (ext.extent3857 && ext.count > 0) {
       ctx.view.fit(ext.extent3857, { padding: [40, 40, 40, 40], maxZoom: 18 });
     }
@@ -64,7 +77,7 @@ export async function wireLayerSelect(ctx: MapContext): Promise<void> {
   if (!select) return;
 
   try {
-    const layers = await fetchLayers();
+    const layers = await fetchLayers(ctx.currentAsOf ?? undefined);
     select.innerHTML = '';
     for (const l of layers) {
       const opt = document.createElement('option');
@@ -73,11 +86,11 @@ export async function wireLayerSelect(ctx: MapContext): Promise<void> {
       select.appendChild(opt);
     }
     select.addEventListener('change', () => {
-      void loadFeatures(ctx, Number(select.value), ctx.currentTheme);
+      void loadFeatures(ctx, Number(select.value), ctx.currentTheme, ctx.currentAsOf);
     });
     if (layers.length > 0) {
       select.value = String(layers[0].layerId);
-      void loadFeatures(ctx, layers[0].layerId, ctx.currentTheme);
+      void loadFeatures(ctx, layers[0].layerId, ctx.currentTheme, ctx.currentAsOf);
     }
   } catch (e) {
     console.error('wireLayerSelect', e);

@@ -82,9 +82,11 @@ function jsonHeaders(actor?: string, ifMatch?: number, requestId?: string): Head
 }
 
 // --- Layer ---
+// E401 (WE4): asOf? 引数を全 layer 系 API に追加。YYYY-MM-DD 形式。
 
-export async function getLayers(): Promise<LayerDto[]> {
-  return handle<LayerDto[]>(await authFetch(`${BASE}/layers`));
+export async function getLayers(asOf?: string): Promise<LayerDto[]> {
+  const qs = asOf ? `?asOf=${encodeURIComponent(asOf)}` : '';
+  return handle<LayerDto[]>(await authFetch(`${BASE}/layers${qs}`));
 }
 
 // hotfix 2件目: layer 選択時に view.fit するための extent
@@ -94,8 +96,9 @@ export interface LayerExtentDto {
   extent3857: [number, number, number, number] | null;
 }
 
-export async function getLayerExtent(layerId: number): Promise<LayerExtentDto> {
-  return handle<LayerExtentDto>(await authFetch(`${BASE}/layers/${layerId}/extent`));
+export async function getLayerExtent(layerId: number, asOf?: string): Promise<LayerExtentDto> {
+  const qs = asOf ? `?asOf=${encodeURIComponent(asOf)}` : '';
+  return handle<LayerExtentDto>(await authFetch(`${BASE}/layers/${layerId}/extent${qs}`));
 }
 
 // hotfix 3件目: クリック位置の近傍 feature 取得 (EPSG:3857 座標, tolerance メートル)
@@ -108,9 +111,10 @@ export interface FeatureAtResponse {
   hits: FeatureAtHit[];
 }
 
-export async function getFeaturesAt(layerId: number, x: number, y: number, tolerance?: number): Promise<FeatureAtResponse> {
+export async function getFeaturesAt(layerId: number, x: number, y: number, tolerance?: number, asOf?: string): Promise<FeatureAtResponse> {
   const params = new URLSearchParams({ x: String(x), y: String(y) });
   if (tolerance !== undefined) params.set('tolerance', String(tolerance));
+  if (asOf) params.set('asOf', asOf);
   return handle<FeatureAtResponse>(await authFetch(`${BASE}/layers/${layerId}/at?${params.toString()}`));
 }
 

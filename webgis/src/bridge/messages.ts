@@ -5,7 +5,7 @@
 // `features_selected` + `theme_change` + `selection_overlay_ready` に切替。
 
 export type WebToHostType = 'features_selected' | 'selection_overlay_ready' | 'map_ready';
-export type HostToWebType = 'layer_select' | 'features_reload' | 'feature_highlight' | 'theme_change' | 'auth_token';
+export type HostToWebType = 'layer_select' | 'features_reload' | 'feature_highlight' | 'theme_change' | 'asof_change' | 'auth_token';
 export type MessageType = WebToHostType | HostToWebType;
 
 export interface Envelope<P = unknown> {
@@ -55,6 +55,12 @@ export interface FeatureHighlightPayload {
 export interface ThemeChangePayload {
   layerId: number;
   theme: string;
+}
+
+// E401 (WE4): WinForms の DateTimePicker 値変更 → WebGIS の asOf 切替
+// asOf=null = 現在 (= valid_to='9999-12-31')
+export interface AsOfChangePayload {
+  asOf: string | null;
 }
 
 // WinForms (ホスト) から API 呼び出し用の JWT を引き渡す (Phase A 動作確認用)

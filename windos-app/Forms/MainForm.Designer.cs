@@ -16,6 +16,10 @@ partial class MainForm
     private ToolStripStatusLabel statusLabel = null!;
     private MenuStrip menuStrip = null!;
     internal ToolStripMenuItem layerAdminMenuItem = null!;
+    // E402 (WE4): asOf 過去時点モード切替
+    private Panel asOfPanel = null!;
+    private CheckBox asOfEnabled = null!;
+    private DateTimePicker asOfPicker = null!;
 
     protected override void Dispose(bool disposing)
     {
@@ -35,6 +39,10 @@ partial class MainForm
         attributeEditor = new AttributeEditorControl();
         statusStrip = new StatusStrip();
         statusLabel = new ToolStripStatusLabel();
+        // E402 (WE4): asOf 過去時点モード切替
+        asOfPanel = new Panel();
+        asOfEnabled = new CheckBox();
+        asOfPicker = new DateTimePicker();
         // WB4 B406: 管理 → レイヤ管理 メニュー (admin のみ Visible=true)
         menuStrip = new MenuStrip();
         var adminMenu = new ToolStripMenuItem("管理");
@@ -60,14 +68,31 @@ partial class MainForm
         // attributeEditor
         attributeEditor.Dock = DockStyle.Fill;
 
+        // E402 (WE4): asOf パネル (CheckBox + DateTimePicker)
+        asOfPanel.Dock = DockStyle.Top;
+        asOfPanel.Height = 32;
+        asOfPanel.Padding = new Padding(0, 4, 0, 4);
+        asOfEnabled.Text = "過去時点";
+        asOfEnabled.Dock = DockStyle.Left;
+        asOfEnabled.Width = 100;
+        asOfEnabled.AutoSize = false;
+        asOfEnabled.Checked = false;
+        asOfPicker.Dock = DockStyle.Fill;
+        asOfPicker.Format = DateTimePickerFormat.Custom;
+        asOfPicker.CustomFormat = "yyyy-MM-dd";
+        asOfPicker.Enabled = false;
+        asOfPanel.Controls.Add(asOfPicker);
+        asOfPanel.Controls.Add(asOfEnabled);
+
         // rightPanel (固定幅 360px、右ドック)
         rightPanel.Dock = DockStyle.Right;
         rightPanel.Width = 360;
         rightPanel.Padding = new Padding(8);
-        // 追加順は「後追加が先ドック」: attributeEditor(Fill) を先に、その上に combo, さらに上に label
+        // 追加順は「後追加が先ドック」: attributeEditor(Fill) を先に、その上に combo, さらに上に label, asOfPanel
         rightPanel.Controls.Add(attributeEditor);
         rightPanel.Controls.Add(layerCombo);
         rightPanel.Controls.Add(layerLabel);
+        rightPanel.Controls.Add(asOfPanel);
 
         // webView (残りスペースを Fill)
         webView.Dock = DockStyle.Fill;
