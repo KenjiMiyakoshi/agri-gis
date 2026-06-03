@@ -37,9 +37,12 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("ConnectionStrings:AgriGis", _connectionString);
 
         // E501 (WE5): IGeoServerStyleSync を fake に差し替え (テスト環境では GeoServer なし)
+        // E'302 (WE'3): "geoserver" HttpClient も Fake handler に差し替え (Tiles テスト用)
         builder.ConfigureTestServices(services =>
         {
             services.AddScoped<IGeoServerStyleSync, FakeGeoServerStyleSync>();
+            services.AddHttpClient("geoserver")
+                .ConfigurePrimaryHttpMessageHandler(() => new FakeGeoServerHandler());
         });
     }
 }
