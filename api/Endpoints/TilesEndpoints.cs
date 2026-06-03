@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
 using AgriGis.Api.Options;
+using AgriGis.Api.Shared;
 using AgriGis.Api.Tiles;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -20,11 +21,13 @@ public static class TilesEndpoints
     public static RouteGroupBuilder MapTilesEndpoints(this RouteGroupBuilder group)
     {
         group.MapGet("/{layerId:int}/{theme}/{z:int}/{x:int}/{y:int}.png",
-            async (int layerId, string theme, int z, int x, int y,
+            async (int layerId, string theme, int z, int x, int y, string? asOf,
                    IHttpClientFactory httpClientFactory,
                    IOptions<GeoServerOptions> geoOpts,
                    CancellationToken ct) =>
         {
+            // E205 (WE2): asOf 対応
+            var asOfDate = AsOfParser.TryParse(asOf);
             // theme 名 validation
             if (!ThemeNameRegex.IsMatch(theme))
             {
@@ -49,14 +52,27 @@ public static class TilesEndpoints
             }
 
             // GeoServer WMS GetMap URL 構築
-            // D201 hotfix (Phase D 朝の動作確認): featureType は単一 (feature_current) で公開し、
-            // layer_id は CQL_FILTER で絞る形に変更。各 layer ごとに GeoServer に featureType を
-            // 増やさずに済むため運用が楽。
+            // D201 hotfix + E205 (WE2): asOf 分岐
+            //   asOf 無し → feature_current featureType + CQL_FILTER=layer_id=N (Phase D 既存)
+            //   asOf あり → feature_asof featureType + CQL_FILTER に valid_from/_to 追加
             var opts = geoOpts.Value;
-            var cqlFilter = Uri.EscapeDataString($"layer_id={layerId}");
+            string featureType;
+            string cqlFilter;
+            if (asOfDate is null)
+            {
+                featureType = "feature_current";
+                cqlFilter = Uri.EscapeDataString($"layer_id={layerId}");
+            }
+            else
+            {
+                var asOfStr = asOfDate.Value.ToString("yyyy-MM-dd");
+                featureType = "feature_asof";
+                cqlFilter = Uri.EscapeDataString(
+                    $"layer_id={layerId} AND valid_from <= '{asOfStr}' AND '{asOfStr}' < valid_to");
+            }
             var url = $"{opts.BaseUrl.TrimEnd('/')}/{opts.Workspace}/wms" +
                       $"?service=WMS&version=1.1.1&request=GetMap" +
-                      $"&layers={opts.Workspace}:feature_current" +
+                      $"&layers={opts.Workspace}:{featureType}" +
                       $"&styles={opts.Workspace}:t_{theme}" +
                       $"&bbox={WebMercatorTileMath.FormatBboxArg(bbox.minX, bbox.minY, bbox.maxX, bbox.maxY)}" +
                       $"&width=256&height=256&srs=EPSG:3857&format=image/png&transparent=true" +
@@ -92,8 +108,8 @@ public static class TilesEndpoints
             }
 
             var pngBytes = await geoResp.Content.ReadAsByteArrayAsync(ct);
-            // Cache-Control: max-age=3600, public を付与して返す
-            return (IResult)new TileFileResult(pngBytes);
+            // E205 (WE2): asOf あり時は Cache-Control: no-store (履歴 cache 肥大化防止)
+            return (IResult)new TileFileResult(pngBytes, noStore: asOfDate is not null);
         });
         // 認可: admin/general/guest 全て。Program.cs で MapGroup("/tiles").RequireAuthorization() で
         // Bearer 必須にする (個別 endpoint では AllowAnonymous しない)。
@@ -102,17 +118,24 @@ public static class TilesEndpoints
     }
 }
 
-// D201: tile 応答に Cache-Control: max-age=3600, public ヘッダを付ける Result 実装
+// D201 + E205: tile 応答に Cache-Control ヘッダを付ける。asOf あり時は no-store。
 public sealed class TileFileResult : IResult
 {
     private readonly byte[] _pngBytes;
+    private readonly bool _noStore;
 
-    public TileFileResult(byte[] pngBytes) => _pngBytes = pngBytes;
+    public TileFileResult(byte[] pngBytes, bool noStore = false)
+    {
+        _pngBytes = pngBytes;
+        _noStore = noStore;
+    }
 
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         httpContext.Response.ContentType = "image/png";
-        httpContext.Response.Headers.CacheControl = "max-age=3600, public";
+        httpContext.Response.Headers.CacheControl = _noStore
+            ? "no-store, no-cache, must-revalidate"
+            : "max-age=3600, public";
         httpContext.Response.ContentLength = _pngBytes.Length;
         await httpContext.Response.Body.WriteAsync(_pngBytes);
     }

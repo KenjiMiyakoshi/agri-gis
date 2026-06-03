@@ -4,6 +4,7 @@ using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
 using AgriGis.Api.Json;
 using AgriGis.Api.Options;
+using AgriGis.Api.Shared;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -15,27 +16,55 @@ public static class AdminLayersEndpoints
 {
     public static RouteGroupBuilder MapAdminLayersEndpoints(this RouteGroupBuilder group)
     {
-        // GET /api/admin/layers?includeDeleted=false
-        group.MapGet("/", async (bool? includeDeleted, NpgsqlDataSource db) =>
+        // GET /api/admin/layers?includeDeleted=false&asOf=YYYY-MM-DD
+        // E202 (WE2): asOf 対応 (includeDeleted と排他、asOf 指定時は includeDeleted 無視)
+        group.MapGet("/", async (bool? includeDeleted, string? asOf, NpgsqlDataSource db) =>
         {
+            var asOfDate = AsOfParser.TryParse(asOf);
             var include = includeDeleted ?? false;
-            var sql = include
-                ? @"SELECT layer_id, layer_name, layer_type, geometry_type,
-                           source_format, source_srid, description,
-                           schema_version, schema_json,
-                           created_by, created_org_id,
-                           created_at, updated_at, deleted_at
-                      FROM layers
-                     ORDER BY layer_id"
-                : @"SELECT layer_id, layer_name, layer_type, geometry_type,
-                           source_format, source_srid, description,
-                           schema_version, schema_json,
-                           created_by, created_org_id,
-                           created_at, updated_at, deleted_at
-                      FROM layers
-                     WHERE deleted_at IS NULL
-                     ORDER BY layer_id";
+            string sql;
+            if (asOfDate is not null)
+            {
+                sql = @"SELECT layer_id, layer_name, layer_type, geometry_type,
+                               source_format, source_srid, description,
+                               schema_version, schema_json,
+                               created_by, created_org_id,
+                               created_at, updated_at, deleted_at
+                          FROM layers
+                         WHERE valid_from <= @asof AND @asof < valid_to
+                        UNION ALL
+                        SELECT layer_id, layer_name, layer_type, geometry_type,
+                               source_format, source_srid, description,
+                               schema_version, schema_json,
+                               created_by, created_org_id,
+                               created_at, updated_at, NULL
+                          FROM layer_history
+                         WHERE valid_from <= @asof AND @asof < valid_to
+                         ORDER BY layer_id";
+            }
+            else if (include)
+            {
+                sql = @"SELECT layer_id, layer_name, layer_type, geometry_type,
+                               source_format, source_srid, description,
+                               schema_version, schema_json,
+                               created_by, created_org_id,
+                               created_at, updated_at, deleted_at
+                          FROM layers
+                         ORDER BY layer_id";
+            }
+            else
+            {
+                sql = @"SELECT layer_id, layer_name, layer_type, geometry_type,
+                               source_format, source_srid, description,
+                               schema_version, schema_json,
+                               created_by, created_org_id,
+                               created_at, updated_at, deleted_at
+                          FROM layers
+                         WHERE valid_to = '9999-12-31'::date AND deleted_at IS NULL
+                         ORDER BY layer_id";
+            }
             await using var cmd = db.CreateCommand(sql);
+            if (asOfDate is not null) cmd.Parameters.AddWithValue("asof", asOfDate.Value);
             await using var r = await cmd.ExecuteReaderAsync();
             var list = new List<LayerAdminDto>();
             while (await r.ReadAsync()) list.Add(MapLayerAdminDto(r));
@@ -85,9 +114,10 @@ public static class AdminLayersEndpoints
             }
         });
 
-        // PATCH /api/admin/layers/{id}
+        // PATCH /api/admin/layers/{id} — E202 (WE2): fn_layer_update 経由化
+        // If-Match: {version} ヘッダ任意。未指定時は現在 version を内部 SELECT で取得 (Phase E)。
         group.MapPatch("/{layerId:int}",
-            async (int layerId, UpdateLayerRequestDto req, ICurrentUser user, NpgsqlDataSource db) =>
+            async (int layerId, UpdateLayerRequestDto req, ICurrentUser user, HttpContext ctx, NpgsqlDataSource db) =>
         {
             if (req.LayerName is null && req.LayerType is null
                 && req.GeometryType is null && req.Description is null)
@@ -101,22 +131,60 @@ public static class AdminLayersEndpoints
             if (req.LayerName is not null) ValidateNonEmpty("layerName", req.LayerName);
             if (req.LayerType is not null) ValidateNonEmpty("layerType", req.LayerType);
 
-            const string sql = @"
-                UPDATE layers
-                   SET layer_name    = COALESCE(@n,  layer_name),
-                       layer_type    = COALESCE(@lt, layer_type),
-                       geometry_type = COALESCE(@gt, geometry_type),
-                       description   = COALESCE(@desc, description),
-                       updated_at    = now()
-                 WHERE layer_id = @id AND deleted_at IS NULL";
-            await using var cmd = db.CreateCommand(sql);
+            // version 取得: If-Match ヘッダ優先、なければ DB から現在値
+            int expectedVersion;
+            var ifMatch = ctx.Request.Headers["If-Match"].ToString();
+            if (!string.IsNullOrEmpty(ifMatch) && int.TryParse(ifMatch.Trim('"'), out var parsedVersion))
+            {
+                expectedVersion = parsedVersion;
+            }
+            else
+            {
+                await using var vcmd = db.CreateCommand(
+                    "SELECT version FROM layers WHERE layer_id = @id AND valid_to = '9999-12-31'::date AND deleted_at IS NULL");
+                vcmd.Parameters.AddWithValue("id", layerId);
+                var v = await vcmd.ExecuteScalarAsync();
+                if (v is null) throw new NotFoundException($"layer not found: {layerId}");
+                expectedVersion = (int)v;
+            }
+
+            var rid = RequestContext.GetRequestId(ctx);
+            await using var cmd = db.CreateCommand(@"
+                SELECT * FROM fn_layer_update(
+                    p_layer_id => @id,
+                    p_layer_name => @n,
+                    p_layer_type => @lt,
+                    p_geometry_type => @gt,
+                    p_description => @desc,
+                    p_source_format => NULL,
+                    p_source_srid => NULL,
+                    p_expected_version => @ev,
+                    p_actor => @act,
+                    p_request_id => @rid,
+                    p_user_id => @uid,
+                    p_org_id => @oid)");
             cmd.Parameters.AddWithValue("id", layerId);
             cmd.Parameters.AddWithValue("n",    (object?)req.LayerName    ?? DBNull.Value);
             cmd.Parameters.AddWithValue("lt",   (object?)req.LayerType    ?? DBNull.Value);
             cmd.Parameters.AddWithValue("gt",   (object?)req.GeometryType ?? DBNull.Value);
             cmd.Parameters.AddWithValue("desc", (object?)req.Description  ?? DBNull.Value);
-            var n = await cmd.ExecuteNonQueryAsync();
-            if (n == 0) throw new NotFoundException($"layer not found: {layerId}");
+            cmd.Parameters.AddWithValue("ev", expectedVersion);
+            cmd.Parameters.AddWithValue("act", user.DisplayName);
+            cmd.Parameters.AddWithValue("rid", rid);
+            cmd.Parameters.AddWithValue("uid", user.UserId);
+            cmd.Parameters.AddWithValue("oid", user.OrgId);
+            try
+            {
+                await cmd.ExecuteScalarAsync();
+            }
+            catch (PostgresException pe) when (pe.SqlState == "02000")
+            {
+                throw new NotFoundException($"layer not found: {layerId}");
+            }
+            catch (PostgresException pe) when (pe.SqlState == "P0001" && pe.Message.Contains("optimistic_lock"))
+            {
+                return Results.Conflict(new { title = "optimistic lock violation", layerId, expectedVersion });
+            }
 
             var dto = await LoadLayerAsync(db, layerId);
             return Results.Ok(dto);
