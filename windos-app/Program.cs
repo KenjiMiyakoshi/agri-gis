@@ -62,6 +62,19 @@ internal static class Program
             c.Timeout = TimeSpan.FromSeconds(30);
         }).AddHttpMessageHandler<BearerHandler>();
 
+        // E'401 (WE'4): LayerEventListener (SSE 購読)
+        // SSE は長時間接続するため、独立した HttpClient (timeout 無限大相当) を持たせる
+        services.AddHttpClient("sse", c =>
+        {
+            c.BaseAddress = new Uri(ApiBaseUrl);
+            c.Timeout = Timeout.InfiniteTimeSpan;
+        });
+        services.AddSingleton<LayerEventListener>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new LayerEventListener(factory.CreateClient("sse"), sp.GetRequiredService<ISessionStore>());
+        });
+
         // BridgeMessenger は CoreWebView2 のライフサイクルが Form 依存のため
         // DI 登録せず、MainForm が WebView2 初期化完了後に new する。
 
