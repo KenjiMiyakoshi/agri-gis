@@ -35,17 +35,22 @@ public sealed class ApiClient : IApiClient
         return (await res.Content.ReadFromJsonAsync<LoginResponseDto>(JsonOpts, ct))!;
     }
 
-    public async Task<IReadOnlyList<LayerDto>> GetLayersAsync(CancellationToken ct)
+    // E'202 (WE'2): URL に ?asOf=YYYY-MM-DD を付与する共通 helper
+    private static string AppendAsOf(string url, DateOnly? asOf)
+        => asOf is null ? url
+            : $"{url}{(url.Contains('?') ? '&' : '?')}asOf={asOf.Value:yyyy-MM-dd}";
+
+    public async Task<IReadOnlyList<LayerDto>> GetLayersAsync(DateOnly? asOf, CancellationToken ct)
     {
-        using var res = await _http.GetAsync("/api/layers", ct);
+        using var res = await _http.GetAsync(AppendAsOf("/api/layers", asOf), ct);
         await EnsureSuccessAsync(res, ct);
         var list = await res.Content.ReadFromJsonAsync<List<LayerDto>>(JsonOpts, ct);
         return list ?? new List<LayerDto>();
     }
 
-    public async Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, CancellationToken ct)
+    public async Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, DateOnly? asOf, CancellationToken ct)
     {
-        using var res = await _http.GetAsync($"/api/layers/{layerId}/schema", ct);
+        using var res = await _http.GetAsync(AppendAsOf($"/api/layers/{layerId}/schema", asOf), ct);
         await EnsureSuccessAsync(res, ct);
         return (await res.Content.ReadFromJsonAsync<LayerSchemaResponseDto>(JsonOpts, ct))!;
     }
@@ -99,9 +104,12 @@ public sealed class ApiClient : IApiClient
 
     // ----- WB3 B401: AdminLayers CRUD -----
 
-    public async Task<IReadOnlyList<LayerAdminDto>> ListLayersAdminAsync(bool includeDeleted, CancellationToken ct)
+    public async Task<IReadOnlyList<LayerAdminDto>> ListLayersAdminAsync(bool includeDeleted, DateOnly? asOf, CancellationToken ct)
     {
-        var url = $"/api/admin/layers?includeDeleted={(includeDeleted ? "true" : "false")}";
+        // E'201 (WE'2): asOf 指定時は includeDeleted 無視 (API 側で asOf 時点 active 判定)
+        var url = asOf is null
+            ? $"/api/admin/layers?includeDeleted={(includeDeleted ? "true" : "false")}"
+            : AppendAsOf("/api/admin/layers", asOf);
         using var res = await _http.GetAsync(url, ct);
         await EnsureSuccessAsync(res, ct);
         var list = await res.Content.ReadFromJsonAsync<List<LayerAdminDto>>(JsonOpts, ct);
@@ -190,11 +198,21 @@ public sealed class ApiClient : IApiClient
         await EnsureSuccessAsync(res, ct);
     }
 
-    public async Task<LayerStyleDto> GetLayerStyleAsync(int layerId, CancellationToken ct)
+    public async Task<LayerStyleDto> GetLayerStyleAsync(int layerId, DateOnly? asOf, CancellationToken ct)
     {
-        using var res = await _http.GetAsync($"/api/admin/layers/{layerId}/style", ct);
+        using var res = await _http.GetAsync(AppendAsOf($"/api/admin/layers/{layerId}/style", asOf), ct);
         await EnsureSuccessAsync(res, ct);
         return (await res.Content.ReadFromJsonAsync<LayerStyleDto>(JsonOpts, ct))!;
+    }
+
+    // E'201 (WE'2): POST /api/features/batch (D'104 で API 完成)
+    public async Task<FeatureBatchUpdateResponseDto> BatchUpdateFeaturesAsync(
+        FeatureBatchUpdateRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync("/api/features/batch", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<FeatureBatchUpdateResponseDto>(JsonOpts, ct))!;
     }
 
     public async Task<LayerStyleDto> UpdateLayerStyleAsync(int layerId, LayerStyleDto style, CancellationToken ct)

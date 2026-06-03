@@ -3,6 +3,7 @@ using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Core;
 using AgriGis.Desktop.Dto;
 using AgriGis.Desktop.Services;
+using AgriGis.Desktop.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
 
@@ -17,6 +18,8 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     private readonly IServiceProvider _sp;
     private BridgeMessenger? _bridge;
     private IReadOnlyList<LayerDto> _layers = Array.Empty<LayerDto>();
+    // E'203 (WE'2): asOf 状態を AsOfState クラスに委譲 (H5 リファクタの足場)
+    private readonly AsOfState _asOf = new();
 
     public MainForm(IApiClient api, ISessionStore session, IServiceProvider sp)
     {
@@ -126,7 +129,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
                 ? (int?)_layers[layerCombo.SelectedIndex].LayerId
                 : null;
 
-            _layers = await _api.GetLayersAsync(CancellationToken.None);
+            _layers = await _api.GetLayersAsync(_asOf.Current, CancellationToken.None);
             layerCombo.Items.Clear();
             foreach (var l in _layers)
             {
@@ -169,7 +172,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         // 認証復旧後にレイヤを再取得
         try
         {
-            _layers = await _api.GetLayersAsync(CancellationToken.None);
+            _layers = await _api.GetLayersAsync(_asOf.Current, CancellationToken.None);
             layerCombo.Items.Clear();
             foreach (var l in _layers)
             {
@@ -249,7 +252,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
             var entityId = entityIds[0];
             var feature = await _api.GetFeatureAsync(entityId, asOf: null, CancellationToken.None);
             var layerId = feature.Properties.LayerId;
-            var schemaRes = await _api.GetLayerSchemaAsync(layerId, CancellationToken.None);
+            var schemaRes = await _api.GetLayerSchemaAsync(layerId, _asOf.Current, CancellationToken.None);
             var coreSchema = new LayerSchema(
                 schemaRes.Schema.Fields
                     .Select(f => new SchemaField(f.Key, f.Type, f.Required, f.Label))
@@ -288,9 +291,18 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     }
 
     // E402 (WE4): asOf 過去時点モード切替
+    // E'203 (WE'2): AsOfState 経由に書き換え、ApiClient 呼び出しにも _asOf.Current を伝搬
     private void OnAsOfEnabledChanged(object? sender, EventArgs e)
     {
         asOfPicker.Enabled = asOfEnabled.Checked;
+        if (asOfEnabled.Checked)
+        {
+            _asOf.SetEnabled(true, DateOnly.FromDateTime(asOfPicker.Value));
+        }
+        else
+        {
+            _asOf.Disable();
+        }
         var asOf = asOfEnabled.Checked ? asOfPicker.Value.ToString("yyyy-MM-dd") : null;
         _bridge?.Send("asof_change", new { asOf });
         // 過去時点モード中は属性編集 disable (Phase E: 過去時点の更新は不可)
@@ -303,6 +315,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     private void OnAsOfPickerChanged(object? sender, EventArgs e)
     {
         if (!asOfEnabled.Checked) return;
+        _asOf.SetValue(DateOnly.FromDateTime(asOfPicker.Value));
         var asOf = asOfPicker.Value.ToString("yyyy-MM-dd");
         _bridge?.Send("asof_change", new { asOf });
         SetStatus($"過去時点モード ({asOf}): 編集不可");
