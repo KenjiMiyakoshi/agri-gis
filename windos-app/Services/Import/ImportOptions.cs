@@ -17,4 +17,20 @@ public sealed class ImportOptions
     /// デフォルト CP932。
     /// </summary>
     public string DefaultDbfEncoding { get; set; } = "CP932";
+
+    /// <summary>
+    /// C'202 (WC'2): EPSG コードを持たないローカル CS の WKT 事前登録テーブル。
+    /// 起動時に SridCatalogBootstrapper.Bootstrap() が SridConverter.RegisterWkt を一括呼び出し。
+    /// 例: 旧日本測地系 平面直角座標系 II / IV 系 (和歌山等)。
+    /// </summary>
+    public List<SridCatalogEntry> SridCatalog { get; set; } = new();
+}
+
+// C'202 (WC'2): SridCatalog の 1 件分エントリ。
+public sealed class SridCatalogEntry
+{
+    public int Srid { get; set; }
+    public string Name { get; set; } = "";
+    public string Wkt { get; set; } = "";
+    public string Source { get; set; } = "";
 }

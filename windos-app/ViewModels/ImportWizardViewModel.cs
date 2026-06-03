@@ -318,6 +318,18 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
                     ? (ISridDetector)new ManualSridDetector(_manualSridInput.Value)
                     : new OgrSridDetector(_importOptions);
                 return new GdalLayerSource(mifPkg, mifSridDetector, mifEncResolver, "mif");
+            case "tab":
+                // C'201 + C'204 (WC'2): TAB 対応
+                if (_encodingResolver is null || _importOptions is null)
+                    throw new InvalidOperationException("TAB import requires encoding/options dependencies");
+                var tabPkg = await TabPackage.OpenAsync(_filePath, ct);
+                var tabEncResolver = !string.IsNullOrEmpty(_encodingOverride)
+                    ? (IEncodingResolver)new InlineEncodingResolver(_encodingOverride!)
+                    : _encodingResolver;
+                var tabSridDetector = _manualSridInput.HasValue
+                    ? (ISridDetector)new ManualSridDetector(_manualSridInput.Value)
+                    : new OgrSridDetector(_importOptions);
+                return new GdalLayerSource(tabPkg, tabSridDetector, tabEncResolver, "tab");
             default:
                 throw new NotSupportedException($"Unsupported format: {_sourceFormat}");
         }

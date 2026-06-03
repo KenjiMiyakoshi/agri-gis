@@ -49,6 +49,9 @@ internal static class Program
         services.AddSingleton<IEncodingResolver, CpgFileResolver>();
         // OgrSridDetector が既定。ManualSridDetector は UI 入力後に new で差し替える経路
         services.AddTransient<ISridDetector, OgrSridDetector>();
+        // C'202 (WC'2): SridCatalog の起動時登録
+        services.AddSingleton<SridConverter>();
+        services.AddSingleton<SridCatalogBootstrapper>();
 
         // A401: セッション保持 (in-memory)。A402 (LoginForm) でログイン成功時に Set される
         services.AddSingleton<ISessionStore, InMemorySessionStore>();
@@ -85,6 +88,14 @@ internal static class Program
         services.AddTransient<ImportWizardForm>();
 
         using var sp = services.BuildServiceProvider();
+
+        // C'202 (WC'2): SridCatalog を SridConverter に一括登録 (Application.Run の前)
+        {
+            var bootstrapper = sp.GetRequiredService<SridCatalogBootstrapper>();
+            var result = bootstrapper.Bootstrap();
+            Trace.WriteLine($"[SridCatalog] registered {result.Registered} entries, warnings={result.Warnings.Count}");
+            foreach (var w in result.Warnings) Trace.WriteLine(w);
+        }
 
         // A402: ログインダイアログを最初に表示。OK 以外で起動中止。
         using (var login = sp.GetRequiredService<LoginForm>())
