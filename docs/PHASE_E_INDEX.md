@@ -34,7 +34,7 @@ Phase A `feature_current/feature_history` で確立した「半開区間 + appen
 | **WE3** | GeoServer (feature_asof featureType + setup.ps1 拡張) | 1.0d | E301-E302 |
 | **WE4** | UI (WinForms asOfPicker + WebGIS asOf 配線) | 1.5d | E401-E402 |
 | **WE5** | テスト + Docs | 2.0d | E501-E504 |
-| | **合計** | **約 10.0d** | **17 Issue** |
+| | **合計** | **約 10.0d** | **20 Issue** |
 
 クリティカルパス約 7.5 営業日 + バッファ。Phase D (11.5d) より軽い (Phase A C1 修復の知見直接転用)。
 
