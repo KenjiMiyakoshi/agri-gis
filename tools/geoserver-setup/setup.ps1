@@ -146,7 +146,7 @@ try {
 }
 
 # 5) featureType のデフォルトスタイルを t_default に
-Write-Host "[5/5] Set default style of '$FT' to '$STYLE'..."
+Write-Host "[5/7] Set default style of '$FT' to '$STYLE'..."
 $styleFqn = "${WS}:${STYLE}"
 $layerXml = @"
 <layer>
@@ -160,11 +160,62 @@ Invoke-RestMethod -Uri "$GS/rest/layers/$ftFqn" -Method Put `
     -Headers $headers -ContentType "application/xml" -Body $layerXml -ErrorAction Stop | Out-Null
 Write-Host "  OK"
 
+# 6) E301 (WE3): feature_asof featureType を公開 (Phase E asOf 経路で使う)
+# WE1 で CREATE OR REPLACE VIEW feature_asof = feature_current UNION ALL feature_history が DB に存在する前提。
+$FT_ASOF = "feature_asof"
+Write-Host "[6/7] Publish featureType '$FT_ASOF' (Phase E asOf 経路)..."
+$ftAsofXml = @"
+<featureType>
+  <name>$FT_ASOF</name>
+  <nativeName>$FT_ASOF</nativeName>
+  <namespace>
+    <name>$WS</name>
+  </namespace>
+  <title>Feature ASOF (feature_current UNION ALL feature_history)</title>
+  <srs>EPSG:3857</srs>
+  <enabled>true</enabled>
+  <projectionPolicy>FORCE_DECLARED</projectionPolicy>
+  <nativeBoundingBox>
+    <minx>-20037508.34</minx>
+    <miny>-20037508.34</miny>
+    <maxx>20037508.34</maxx>
+    <maxy>20037508.34</maxy>
+    <crs>EPSG:3857</crs>
+  </nativeBoundingBox>
+  <latLonBoundingBox>
+    <minx>-180</minx><miny>-85</miny><maxx>180</maxx><maxy>85</maxy>
+    <crs>EPSG:4326</crs>
+  </latLonBoundingBox>
+</featureType>
+"@
+Invoke-GeoServer -Method Post -Path "/rest/workspaces/$WS/datastores/$DS/featuretypes" -Body $ftAsofXml | Out-Null
+Write-Host "  OK"
+
+# feature_asof のデフォルトスタイルも t_default
+$ftAsofFqn = "${WS}:${FT_ASOF}"
+try {
+    Invoke-RestMethod -Uri "$GS/rest/layers/$ftAsofFqn" -Method Put `
+        -Headers $headers -ContentType "application/xml" -Body $layerXml -ErrorAction Stop | Out-Null
+    Write-Host "  default style assigned to '$FT_ASOF'"
+} catch {
+    Write-Host "  default style assignment skipped (layer may not be ready yet): $_"
+}
+
+# 7) E301 (WE3): GeoServer reload (新 featureType を即時反映)
+Write-Host "[7/7] Reloading GeoServer to apply new featureType..."
+try {
+    Invoke-RestMethod -Uri "$GS/rest/reload" -Method Post -Headers $headers -ErrorAction Stop | Out-Null
+    Write-Host "  OK"
+} catch {
+    Write-Host "  reload skipped: $_"
+}
+
 Write-Host ""
 Write-Host "===== GeoServer setup complete ====="
 Write-Host "Workspace: $WS"
 Write-Host "DataStore: $DS"
 Write-Host "FeatureType: $FT (use CQL_FILTER=layer_id=N for per-layer filtering)"
+Write-Host "FeatureType: $FT_ASOF (Phase E asOf 経路、CQL_FILTER + valid_from/_to で過去時点)"
 Write-Host "Style: $STYLE"
 Write-Host ""
 Write-Host "Test GetMap (layer_id=1 / z=10):"
