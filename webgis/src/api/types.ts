@@ -21,6 +21,7 @@ export interface LayerDto {
   createdAt: string;             // ISO 8601
   schemaVersion: number;
   schema: LayerSchemaDto;
+  styleVersion: number;          // D'101 (WD'1): cache busting で URL の ?sv= に使う
 }
 
 export interface LayerSchemaResponseDto {

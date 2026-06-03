@@ -16,6 +16,8 @@ export interface MapContext {
   currentTheme: string;
   // E401 (WE4): 現在の asOf (YYYY-MM-DD)。null = 現在 (= valid_to='9999-12-31')
   currentAsOf: string | null;
+  // D'201 (WD'2): 現在の style_version。URL に ?sv= で組み込んで cache busting
+  currentStyleVersion: number | null;
 }
 
 // hotfix 2件目 (2026-06-03 朝の動作確認):
@@ -59,6 +61,7 @@ export function createMap(targetId: string): MapContext {
     selectionLayer,
     currentLayerId: null,
     currentTheme: DEFAULT_THEME,
-    currentAsOf: null
+    currentAsOf: null,
+    currentStyleVersion: null
   };
 }

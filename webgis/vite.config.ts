@@ -1,6 +1,16 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'path';
 
 export default defineConfig({
+  // D'202 (WD'2): admin-style.html を分離エントリ化
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        adminStyle: resolve(__dirname, 'admin-style.html')
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {

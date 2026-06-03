@@ -21,6 +21,7 @@ public partial class LayerAdminForm : Form
         importButton.Click += async (_, _) => await ImportAsync();
         deleteButton.Click += async (_, _) => await DeleteSelectedAsync();
         refreshButton.Click += async (_, _) => await LoadAsync();
+        themeEditButton.Click += (_, _) => OpenThemeEditor();
         closeButton.Click += (_, _) => Close();
     }
 
@@ -52,6 +53,29 @@ public partial class LayerAdminForm : Form
         if (wizard.ShowDialog(this) == DialogResult.OK)
         {
             await LoadAsync();
+        }
+    }
+
+    // D'206 (WD'2): WebGIS admin-style.html を既定ブラウザで開く
+    private void OpenThemeEditor()
+    {
+        if (grid.CurrentRow?.DataBoundItem is not LayerAdminDto layer)
+        {
+            MessageBox.Show("レイヤを選択してください", "AgriGis", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var url = $"http://localhost:5173/admin-style.html?layerId={layer.LayerId}";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"ブラウザ起動失敗: {ex.Message}", "AgriGis", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
