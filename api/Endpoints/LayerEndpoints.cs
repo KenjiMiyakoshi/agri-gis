@@ -128,26 +128,40 @@ public static class LayerEndpoints
             string sql;
             if (asOfDate is null)
             {
+                // D'101 (WD'1): styleVersion を LEFT JOIN で取得 (現在 active な layer_style_version)
                 sql = @"
-                    SELECT layer_id, layer_name, layer_type, owner_org_id, is_shared, created_at,
-                           schema_version, schema_json
-                      FROM layers
-                     WHERE valid_to = '9999-12-31'::date
-                       AND deleted_at IS NULL
-                     ORDER BY layer_id";
+                    SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
+                           l.schema_version, l.schema_json,
+                           COALESCE(lsv.style_version, 1) AS style_version
+                      FROM layers l
+                      LEFT JOIN layer_style_version lsv
+                        ON lsv.layer_id = l.layer_id
+                       AND lsv.valid_to = '9999-12-31'::date
+                     WHERE l.valid_to = '9999-12-31'::date
+                       AND l.deleted_at IS NULL
+                     ORDER BY l.layer_id";
             }
             else
             {
+                // D'101 (WD'1): asOf 時点で active だった layer_style_version
                 sql = @"
-                    SELECT layer_id, layer_name, layer_type, owner_org_id, is_shared, created_at,
-                           schema_version, schema_json
-                      FROM layers
-                     WHERE valid_from <= @asof AND @asof < valid_to
+                    SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
+                           l.schema_version, l.schema_json,
+                           COALESCE(lsv.style_version, 1) AS style_version
+                      FROM layers l
+                      LEFT JOIN layer_style_version lsv
+                        ON lsv.layer_id = l.layer_id
+                       AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                     WHERE l.valid_from <= @asof AND @asof < l.valid_to
                     UNION ALL
-                    SELECT layer_id, layer_name, layer_type, owner_org_id, is_shared, created_at,
-                           schema_version, schema_json
-                      FROM layer_history
-                     WHERE valid_from <= @asof AND @asof < valid_to
+                    SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.owner_org_id, lh.is_shared, lh.created_at,
+                           lh.schema_version, lh.schema_json,
+                           COALESCE(lsv.style_version, 1) AS style_version
+                      FROM layer_history lh
+                      LEFT JOIN layer_style_version lsv
+                        ON lsv.layer_id = lh.layer_id
+                       AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                     WHERE lh.valid_from <= @asof AND @asof < lh.valid_to
                      ORDER BY layer_id";
             }
 
@@ -171,7 +185,8 @@ public static class LayerEndpoints
                     IsShared: r.GetBoolean(4),
                     CreatedAt: new DateTimeOffset(createdAt, TimeSpan.Zero),
                     SchemaVersion: r.GetInt32(6),
-                    Schema: schema
+                    Schema: schema,
+                    StyleVersion: r.GetInt32(8)
                 ));
             }
             return Results.Ok(rows);

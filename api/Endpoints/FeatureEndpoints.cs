@@ -222,6 +222,72 @@ public static class FeatureEndpoints
             return Results.Ok(new { entityId, version = newVersion });
         }).RequireAuthorization("WriteFeature");
 
+        // D'104 (WD'1): POST /api/features/batch — N 件まとめて属性 patch (all-or-nothing)
+        // 楽観ロック (entityIds × ifMatchVersions の全件突合)、1 件 mismatch → 409 + 全件 rollback。
+        // geometry は不変、属性のみ JSONB merge (`||`) で patch。
+        group.MapPost("/batch", async (
+            FeatureBatchUpdateRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
+        {
+            // 入力検証
+            var errs = new List<AttributeErrorDto>();
+            if (req.EntityIds is null || req.EntityIds.Count == 0)
+                errs.Add(new AttributeErrorDto("entityIds", "required", "entityIds must be non-empty"));
+            if (req.IfMatchVersions is null || req.IfMatchVersions.Count == 0)
+                errs.Add(new AttributeErrorDto("ifMatchVersions", "required", "ifMatchVersions must be non-empty"));
+            if (req.EntityIds is not null && req.IfMatchVersions is not null
+                && req.EntityIds.Count != req.IfMatchVersions.Count)
+                errs.Add(new AttributeErrorDto("ifMatchVersions", "length_mismatch",
+                    "entityIds and ifMatchVersions must have same length"));
+            if (req.EntityIds is not null && req.EntityIds.Count > 1000)
+                errs.Add(new AttributeErrorDto("entityIds", "limit",
+                    "entityIds limit is 1000 per batch"));
+            if (errs.Count > 0) throw new ValidationException(errs);
+
+            var actor = user.DisplayName;
+            var rid = RequestContext.GetRequestId(ctx);
+
+            await using var cmd = db.CreateCommand(@"
+                SELECT out_entity_id, out_new_version, out_valid_from
+                  FROM fn_feature_batch_update(@eids, @vers, @patch::jsonb, @act, @rid, @uid, @oid)");
+            cmd.Parameters.AddWithValue("eids", req.EntityIds!.ToArray());
+            cmd.Parameters.AddWithValue("vers", req.IfMatchVersions!.ToArray());
+            cmd.Parameters.AddWithValue("patch", req.AttributesPatch.GetRawText());
+            cmd.Parameters.AddWithValue("act", actor);
+            cmd.Parameters.AddWithValue("rid", rid);
+            cmd.Parameters.AddWithValue("uid", user.UserId);
+            cmd.Parameters.AddWithValue("oid", user.OrgId);
+
+            try
+            {
+                await using var r = await cmd.ExecuteReaderAsync();
+                var results = new List<FeatureBatchUpdateResultDto>(req.EntityIds!.Count);
+                while (await r.ReadAsync())
+                {
+                    results.Add(new FeatureBatchUpdateResultDto(
+                        EntityId: r.GetGuid(0),
+                        NewVersion: r.GetInt32(1),
+                        ValidFrom: DateOnly.FromDateTime(r.GetDateTime(2))));
+                }
+                return Results.Ok(new FeatureBatchUpdateResponseDto(results, results.Count));
+            }
+            catch (PostgresException pe) when (pe.SqlState == "02000")
+            {
+                // entity not found
+                throw new NotFoundException(pe.MessageText);
+            }
+            catch (PostgresException pe) when (pe.SqlState == "P0001"
+                                                && pe.MessageText.Contains("optimistic_lock_failed"))
+            {
+                return Results.Conflict(new
+                {
+                    type = "https://docs.agri-gis/errors/batch-version-mismatch",
+                    title = "Optimistic lock failed in batch update",
+                    status = 409,
+                    detail = pe.MessageText
+                });
+            }
+        }).RequireAuthorization("WriteFeature");
+
         // 0212: DELETE /api/features/{entityId} (履歴退避 + current から削除)
         group.MapDelete("/{entityId:guid}",
             async (Guid entityId, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>

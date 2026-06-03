@@ -16,7 +16,8 @@ public sealed record LayerAdminDto(
     int? CreatedOrgId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? DeletedAt);
+    DateTimeOffset? DeletedAt,
+    int StyleVersion);
 
 public sealed record CreateLayerRequestDto(
     string LayerName,
