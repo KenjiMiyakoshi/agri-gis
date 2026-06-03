@@ -47,8 +47,7 @@ public sealed class FakeApiClient : IApiClient
             SourceSrid: req.SourceSrid, Description: req.Description,
             SchemaVersion: 1, Schema: req.Schema ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>()),
             CreatedBy: null, CreatedOrgId: null,
-            CreatedAt: DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
-            DeletedAt: null);
+            CreatedAt: DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow);
         return Task.FromResult(dto);
     }
 

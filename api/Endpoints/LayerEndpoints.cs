@@ -29,7 +29,7 @@ public static class LayerEndpoints
                      WHERE layer_id = @id
                        AND geom IS NOT NULL
                        AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(@x, @y), 3857), @tol)
-                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = feature_current.layer_id AND l.deleted_at IS NULL)
+                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = feature_current.layer_id AND l.valid_to = '9999-12-31'::date)
                      ORDER BY dist
                      LIMIT 5";
             }
@@ -84,7 +84,7 @@ public static class LayerEndpoints
                     FROM feature_current
                     WHERE layer_id = @id
                       AND geom IS NOT NULL
-                      AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = feature_current.layer_id AND l.deleted_at IS NULL)";
+                      AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = feature_current.layer_id AND l.valid_to = '9999-12-31'::date)";
             }
             else
             {
@@ -138,7 +138,7 @@ public static class LayerEndpoints
                         ON lsv.layer_id = l.layer_id
                        AND lsv.valid_to = '9999-12-31'::date
                      WHERE l.valid_to = '9999-12-31'::date
-                       AND l.deleted_at IS NULL
+                       AND l.valid_to = '9999-12-31'::date
                      ORDER BY l.layer_id";
             }
             else
@@ -202,7 +202,7 @@ public static class LayerEndpoints
                 sql = @"
                     SELECT schema_version, schema_json
                       FROM layers
-                     WHERE layer_id = @id AND valid_to = '9999-12-31'::date AND deleted_at IS NULL";
+                     WHERE layer_id = @id AND valid_to = '9999-12-31'::date";
             }
             else
             {

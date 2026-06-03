@@ -31,7 +31,7 @@ public static class AdminLayerStyleEndpoints
                 sql = @"
                     SELECT style_json
                       FROM layers
-                     WHERE layer_id = @id AND deleted_at IS NULL";
+                     WHERE layer_id = @id AND valid_to = '9999-12-31'::date";
             }
             else
             {
@@ -70,7 +70,7 @@ public static class AdminLayerStyleEndpoints
             const string existsSql = @"
                 SELECT 1
                   FROM layers
-                 WHERE layer_id = @id AND deleted_at IS NULL";
+                 WHERE layer_id = @id AND valid_to = '9999-12-31'::date";
             await using (var existsCmd = db.CreateCommand(existsSql))
             {
                 existsCmd.Parameters.AddWithValue("id", id);

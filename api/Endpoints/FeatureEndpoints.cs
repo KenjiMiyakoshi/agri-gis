@@ -42,14 +42,14 @@ public static class FeatureEndpoints
                            attributes, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS gj
                       FROM feature_current fc
                      WHERE fc.entity_id = @e AND fc.geom IS NOT NULL
-                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)"
+                       AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.valid_to = '9999-12-31'::date)"
                 : @"WITH unioned AS (
                         SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
                                attributes_schema_version, created_by, updated_by, created_at, updated_at,
                                attributes, geom
                           FROM feature_current fc
                          WHERE fc.entity_id = @e AND fc.geom IS NOT NULL
-                           AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.deleted_at IS NULL)
+                           AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fc.layer_id AND l.valid_to = '9999-12-31'::date)
                            AND valid_from <= @asof AND @asof < valid_to
                         UNION ALL
                         SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
@@ -57,7 +57,7 @@ public static class FeatureEndpoints
                                attributes, geom
                           FROM feature_history fh
                          WHERE fh.entity_id = @e AND fh.geom IS NOT NULL
-                           AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.deleted_at IS NULL)
+                           AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.valid_to = '9999-12-31'::date)
                            AND valid_from <= @asof AND @asof < valid_to
                     )
                     SELECT feature_id, layer_id, entity_id, version, valid_from, valid_to,
@@ -94,7 +94,7 @@ public static class FeatureEndpoints
                        attributes
                   FROM feature_history fh
                  WHERE fh.entity_id = @e
-                   AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.deleted_at IS NULL)
+                   AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = fh.layer_id AND l.valid_to = '9999-12-31'::date)
                  ORDER BY valid_to DESC, history_id DESC";
 
             await using var cmd = db.CreateCommand(sql);
@@ -119,7 +119,7 @@ public static class FeatureEndpoints
             LayerSchemaDto schema;
             int schemaVersion;
             await using (var c = db.CreateCommand(
-                "SELECT schema_version, schema_json FROM layers WHERE layer_id = @id AND deleted_at IS NULL"))
+                "SELECT schema_version, schema_json FROM layers WHERE layer_id = @id AND valid_to = '9999-12-31'::date"))
             {
                 c.Parameters.AddWithValue("id", req.LayerId);
                 await using var rr = await c.ExecuteReaderAsync();
@@ -182,7 +182,7 @@ public static class FeatureEndpoints
                 @"SELECT l.schema_json
                     FROM feature_current fc
                     JOIN layers l ON l.layer_id = fc.layer_id
-                   WHERE fc.entity_id = @e AND l.deleted_at IS NULL"))
+                   WHERE fc.entity_id = @e AND l.valid_to = '9999-12-31'::date"))
             {
                 c.Parameters.AddWithValue("e", entityId);
                 await using var rr = await c.ExecuteReaderAsync();
@@ -300,7 +300,7 @@ public static class FeatureEndpoints
                 @"SELECT 1
                     FROM feature_current fc
                     JOIN layers l ON l.layer_id = fc.layer_id
-                   WHERE fc.entity_id = @e AND l.deleted_at IS NULL"))
+                   WHERE fc.entity_id = @e AND l.valid_to = '9999-12-31'::date"))
             {
                 precheck.Parameters.AddWithValue("e", entityId);
                 if (await precheck.ExecuteScalarAsync() is null)

@@ -7,9 +7,11 @@ namespace AgriGis.Api.Tests.Fixtures;
 // 順序を「users → layers」に変更し、alice の UUID + 既定組織 id を seed layers に紐付ける。
 public static class DbReset
 {
+    // E'101 (WE'1): Phase E で追加された layer_style_version / layer_history も TRUNCATE 対象に
+    // (テスト full run で並列耐性問題を起こす原因の 1 つ。test-isolation.md 参照)
     private const string TruncateSql = @"
         TRUNCATE audit_log RESTART IDENTITY CASCADE;
-        TRUNCATE feature_current, feature_history, layer_schema_version
+        TRUNCATE feature_current, feature_history, layer_schema_version, layer_style_version, layer_history
                  RESTART IDENTITY CASCADE;
         DELETE FROM layer_import_job;
         DELETE FROM layers;
