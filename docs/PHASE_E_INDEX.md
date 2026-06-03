@@ -82,16 +82,26 @@ down script 7 本も同時作成。
 10. PR 単位で全 6 Wave が main にマージ済
 11. `orchestration_state.md` メモリ更新
 
-## PR 一覧 (Phase E 完了時に最終化)
+## PR 一覧 (Phase E 完了)
 
 | Wave | PR | 状態 |
 |------|----|------|
-| Design 8 本 + WE0 PoC | (本 PR 候補) | レビュー待ち |
-| WE1 (`feature/phase-e-we1-db`) | #??? | 未着手 |
-| WE2 (`feature/phase-e-we2-api`) | #??? | 未着手 |
-| WE3 (`feature/phase-e-we3-geoserver`) | #??? | 未着手 |
-| WE4 (`feature/phase-e-we4-ui`) | #??? | 未着手 |
-| WE5 (`feature/phase-e-we5-tests-docs`) | #??? | 未着手 |
+| Design 8 本 | [#195](https://github.com/KenjiMiyakoshi/agri-gis/pull/195) | マージ済 |
+| WE0 PoC | [#216](https://github.com/KenjiMiyakoshi/agri-gis/pull/216) | マージ済 (GO 判定) |
+| WE1 DB 土台 | [#217](https://github.com/KenjiMiyakoshi/agri-gis/pull/217) | マージ済 |
+| WE2 API | [#218](https://github.com/KenjiMiyakoshi/agri-gis/pull/218) | マージ済 |
+| WE3 GeoServer | [#219](https://github.com/KenjiMiyakoshi/agri-gis/pull/219) | マージ済 |
+| WE4 UI | [#220](https://github.com/KenjiMiyakoshi/agri-gis/pull/220) | マージ済 |
+| WE5 Tests + Docs | 本 PR | レビュー待ち |
+
+## テスト集計 (Phase E 完了時点)
+
+| カテゴリ | Phase D | Phase E 追加 | 合計 |
+|---------|--------|-----------|------|
+| api.tests | 64 | +19 | **83 pass** |
+| webgis vitest | 9 | +7 | **16 pass** |
+| windos-app.tests | 118 | 0 | 118 pass (MainFormAsOfPickerTests は Phase E') |
+| **計** | 191 | +26 | **217** |
 
 ## Phase E' 申し送り
 
