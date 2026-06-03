@@ -26,7 +26,8 @@ export function wireSelection(ctx: MapContext): void {
     const resolution = ctx.view.getResolution() ?? 1;
     const tolerance = resolution * 10;  // 10 pixel 相当
     try {
-      const hit = await getFeaturesAt(ctx.currentLayerId, x, y, tolerance);
+      // E401 (WE4): currentAsOf を asOf 引数として伝搬
+      const hit = await getFeaturesAt(ctx.currentLayerId, x, y, tolerance, ctx.currentAsOf ?? undefined);
       if (hit.hits.length === 0) return;
       const entityIds = hit.hits.map((h) => h.entityId);
       const sel = await createSelection({ entityIds });

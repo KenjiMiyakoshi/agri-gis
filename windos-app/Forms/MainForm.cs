@@ -29,6 +29,9 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         layerCombo.SelectedIndexChanged += OnLayerComboChanged;
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
+        // E402 (WE4): asOf 過去時点モード切替
+        asOfEnabled.CheckedChanged += OnAsOfEnabledChanged;
+        asOfPicker.ValueChanged += OnAsOfPickerChanged;
         // WB4 B406: レイヤ管理メニュー
         layerAdminMenuItem.Click += async (_, _) =>
         {
@@ -282,6 +285,27 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     public void SendThemeChange(int layerId, string theme)
     {
         _bridge?.Send("theme_change", new { layerId, theme });
+    }
+
+    // E402 (WE4): asOf 過去時点モード切替
+    private void OnAsOfEnabledChanged(object? sender, EventArgs e)
+    {
+        asOfPicker.Enabled = asOfEnabled.Checked;
+        var asOf = asOfEnabled.Checked ? asOfPicker.Value.ToString("yyyy-MM-dd") : null;
+        _bridge?.Send("asof_change", new { asOf });
+        // 過去時点モード中は属性編集 disable (Phase E: 過去時点の更新は不可)
+        attributeEditor.SetReadOnly(asOfEnabled.Checked);
+        SetStatus(asOfEnabled.Checked
+            ? $"過去時点モード ({asOf}): 編集不可"
+            : "現在モード: 編集可能");
+    }
+
+    private void OnAsOfPickerChanged(object? sender, EventArgs e)
+    {
+        if (!asOfEnabled.Checked) return;
+        var asOf = asOfPicker.Value.ToString("yyyy-MM-dd");
+        _bridge?.Send("asof_change", new { asOf });
+        SetStatus($"過去時点モード ({asOf}): 編集不可");
     }
 
     private void OnAttributeEditorSaved(object? sender, int layerId)
