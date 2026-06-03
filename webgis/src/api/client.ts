@@ -218,6 +218,36 @@ export async function deleteSelection(sid: string): Promise<void> {
   await handle<void>(res);
 }
 
+// --- D'104 (WD'1) batch feature update ---
+
+export interface FeatureBatchUpdateRequest {
+  entityIds: string[];
+  ifMatchVersions: number[];
+  attributesPatch: Record<string, unknown>;
+}
+
+export interface FeatureBatchUpdateResultDto {
+  entityId: string;
+  newVersion: number;
+  validFrom: string;
+}
+
+export interface FeatureBatchUpdateResponseDto {
+  results: FeatureBatchUpdateResultDto[];
+  count: number;
+}
+
+export async function postFeatureBatch(
+  req: FeatureBatchUpdateRequest
+): Promise<FeatureBatchUpdateResponseDto> {
+  const res = await authFetch(`${BASE}/features/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req)
+  });
+  return handle<FeatureBatchUpdateResponseDto>(res);
+}
+
 // --- 互換エイリアス（既存呼び出しを壊さないため） ---
 
 export const fetchLayers = getLayers;
