@@ -306,6 +306,18 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
                     ? (ISridDetector)new ManualSridDetector(_manualSridInput.Value)
                     : new OgrSridDetector(_importOptions);
                 return new GdalLayerSource(pkg, sridDetector, encResolver, "shapefile");
+            case "mif":
+                // C'102 + C'103 + C'104 (WC'1): MIF/MID 対応
+                if (_encodingResolver is null || _importOptions is null)
+                    throw new InvalidOperationException("MIF import requires encoding/options dependencies");
+                var mifPkg = await MifPackage.OpenAsync(_filePath, ct);
+                var mifEncResolver = !string.IsNullOrEmpty(_encodingOverride)
+                    ? (IEncodingResolver)new InlineEncodingResolver(_encodingOverride!)
+                    : _encodingResolver;
+                var mifSridDetector = _manualSridInput.HasValue
+                    ? (ISridDetector)new ManualSridDetector(_manualSridInput.Value)
+                    : new OgrSridDetector(_importOptions);
+                return new GdalLayerSource(mifPkg, mifSridDetector, mifEncResolver, "mif");
             default:
                 throw new NotSupportedException($"Unsupported format: {_sourceFormat}");
         }
@@ -350,6 +362,6 @@ public sealed class ImportWizardViewModel : INotifyPropertyChanged
     {
         private readonly string _encoding;
         public InlineEncodingResolver(string encoding) { _encoding = encoding; }
-        public string Resolve(ShapefilePackage package) => _encoding;
+        public string Resolve(IImportPackage package) => _encoding;
     }
 }

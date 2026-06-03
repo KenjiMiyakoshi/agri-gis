@@ -17,7 +17,7 @@ public sealed class ImportWizardViewModelShapefileTests
 
     private sealed class StubEncodingResolver : IEncodingResolver
     {
-        public string Resolve(ShapefilePackage package) => "CP932";
+        public string Resolve(IImportPackage package) => "CP932";
     }
 
     [Fact]
