@@ -150,6 +150,8 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok" })).AllowAnonymou
 // A206: ロールベース認可
 app.MapGroup("/api/auth").MapAuthEndpoints();
 app.MapGroup("/api/layers").MapLayerEndpoints().RequireAuthorization();
+// LG102 (Phase LG WLG1): レイヤグループのフラット一覧 (authenticated 全 role)
+app.MapGroup("/api/layer-groups").MapLayerGroupsEndpoints().RequireAuthorization();
 app.MapGroup("/api/features").MapFeatureEndpoints().RequireAuthorization();
 var adminGroup = app.MapGroup("/api/admin").RequireAuthorization(p => p.RequireRole("admin"));
 adminGroup.MapAdminEndpoints();
@@ -160,6 +162,8 @@ adminGroup.MapGroup("/users").MapAdminUsersEndpoints();
 adminGroup.MapGroup("/layers").MapAdminLayersEndpoints();
 // D203 (WD2): admin theme CRUD (GET/PUT /api/admin/layers/{id}/style)
 adminGroup.MapGroup("/layers").MapAdminLayerStyleEndpoints();
+// LG103/LG104 (Phase LG WLG1): layer-groups CRUD + PUT /api/admin/layers/{layerId}/group
+adminGroup.MapAdminLayerGroupsEndpoints();
 
 // D201 (WD2): GET /tiles/{layerId}/{theme}/{z}/{x}/{y}.png + selection overlay
 //   tile は admin/general/guest 全員、selection は Bearer + owner
