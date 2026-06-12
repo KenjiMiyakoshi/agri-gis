@@ -152,6 +152,59 @@ public sealed class FakeApiClient : IApiClient
         return Task.FromResult(dto);
     }
 
+    // LG305 (Phase LG WLG3): layer-groups stub
+    public List<LayerGroupDto> LayerGroups = new();
+    public int GetLayerGroupsCalls;
+    public int CreateLayerGroupCalls;
+    public int UpdateLayerGroupCalls;
+    public int DeleteLayerGroupCalls;
+    public int AssignLayerToGroupCalls;
+
+    public Task<IReadOnlyList<LayerGroupDto>> GetLayerGroupsAsync(CancellationToken ct)
+    {
+        GetLayerGroupsCalls++;
+        return Task.FromResult<IReadOnlyList<LayerGroupDto>>(LayerGroups);
+    }
+
+    public Task<LayerGroupDto> CreateLayerGroupAsync(CreateLayerGroupRequestDto req, CancellationToken ct)
+    {
+        CreateLayerGroupCalls++;
+        var id = LayerGroups.Count == 0 ? 1 : LayerGroups.Max(g => g.GroupId) + 1;
+        var dto = new LayerGroupDto(id, req.ParentGroupId, req.GroupName, req.SortOrder ?? 0);
+        LayerGroups.Add(dto);
+        return Task.FromResult(dto);
+    }
+
+    public Task<LayerGroupDto> UpdateLayerGroupAsync(int groupId, UpdateLayerGroupRequestDto req, CancellationToken ct)
+    {
+        UpdateLayerGroupCalls++;
+        var idx = LayerGroups.FindIndex(g => g.GroupId == groupId);
+        if (idx < 0) throw new InvalidOperationException($"group not found: {groupId}");
+        var cur = LayerGroups[idx];
+        var dto = cur with
+        {
+            GroupName = req.GroupName ?? cur.GroupName,
+            ParentGroupId = req.ParentGroupId ?? cur.ParentGroupId,
+            SortOrder = req.SortOrder ?? cur.SortOrder,
+        };
+        LayerGroups[idx] = dto;
+        return Task.FromResult(dto);
+    }
+
+    public Task DeleteLayerGroupAsync(int groupId, CancellationToken ct)
+    {
+        DeleteLayerGroupCalls++;
+        LayerGroups.RemoveAll(g => g.GroupId == groupId);
+        return Task.CompletedTask;
+    }
+
+    public Task<LayerGroupAssignmentDto> AssignLayerToGroupAsync(
+        int layerId, AssignLayerGroupRequestDto req, CancellationToken ct)
+    {
+        AssignLayerToGroupCalls++;
+        return Task.FromResult(new LayerGroupAssignmentDto(layerId, req.GroupId, req.SortOrder));
+    }
+
     public Task<IReadOnlyList<OrgLayerPermissionDto>> UpdateOrgLayerPermissionsAsync(
         int orgId, OrgLayerPermsUpsertDto req, CancellationToken ct)
     {

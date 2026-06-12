@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Core;
+using AgriGis.Desktop.Core.LayerTree;
 using AgriGis.Desktop.Dto;
 using AgriGis.Desktop.Services;
 using AgriGis.Desktop.ViewModels;
@@ -31,17 +32,20 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         InitializeComponent();
         // WB4 B405 (H4 解消): AttributeEditorControl に IFeatureSaveCoordinator を注入
         attributeEditor.SetCoordinator(this);
-        // F301 (Phase F WF3): layerList (CheckedListBox) の ItemCheck で layer_visibility_change を通知
-        layerList.ItemCheck += OnLayerListItemCheck;
-        // F'304 (Phase F' WF'3): layerList drag-and-drop で z-order 並べ替え
-        layerList.MouseDown += OnLayerListMouseDown;
-        layerList.MouseMove += OnLayerListMouseMove;
-        layerList.MouseUp += OnLayerListMouseUp;  // F'304 hotfix: click 判定 (drag でなければ toggle)
-        layerList.DragOver += OnLayerListDragOver;
-        layerList.DragDrop += OnLayerListDragDrop;
-        layerList.DragLeave += OnLayerListDragLeave;  // F'304 hotfix: indicator クリア
-        // F'304 hotfix: ドラッグ中の視覚フィードバック (ghost form + cursor 変更)
-        layerList.GiveFeedback += OnLayerListGiveFeedback;
+        // LG303 (Phase LG WLG3): layerTree (owner-draw TreeView) のイベント配線。
+        // 旧 layerList (DragAwareCheckedListBox) は LayerTreeView に置換済み。
+        layerTree.LayerVisibleToggled += OnLayerVisibleToggled;
+        layerTree.LayerEditToggled += layerId => OnLayerFlagToggled(layerId, isEdit: true);
+        layerTree.LayerSnapToggled += layerId => OnLayerFlagToggled(layerId, isEdit: false);
+        layerTree.GroupVisibleToggled += OnGroupVisibleToggled;
+        layerTree.NodeMoved += OnLayerTreeNodeMoved;
+        layerTree.AfterExpand += OnLayerTreeExpandedChanged;
+        layerTree.AfterCollapse += OnLayerTreeExpandedChanged;
+        layerTree.NodeMouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Right) layerTree.SelectedNode = e.Node;
+        };
+        layerTree.ContextMenuStrip = BuildLayerTreeContextMenu();
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
         // E402 (WE4): asOf 過去時点モード切替
@@ -106,10 +110,8 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
                 _bridge.Send("auth_token", new { accessToken = session.AccessToken });
             }
 
+            // LG303: ReloadAsync が layer_tree_v1 / layer_flags_v1 / 旧 layer_order_v1 移行まで担う
             await ReloadLayersAsync();
-
-            // F'305 (Phase F' WF'3): 永続化された layer 順序を適用
-            await ApplyPersistedLayerOrderSafelyAsync();
 
             SetStatus("Ready");
             ApplyGuestRestriction();
@@ -146,14 +148,12 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     private bool _canEditCurrent = true;
 
     // WB5 fix: LayerAdminForm からのインポート/削除後に呼ぶ、または起動時の初期読込で呼ぶ。
-    // F301 (Phase F WF3): layerList ベース。VisibleLayerIds は Controller が保持。
+    // LG303: Controller が tree (groups + preference マージ) を再構築する。
     private async Task ReloadLayersAsync()
     {
         try
         {
             SetStatus("Loading layers...");
-            // F301: prevSelectedLayerId は廃止 (複数選択時代に「直前の単一選択」概念がなくなる)。
-            //       VisibleLayerIds は Controller 内に永続化されるので、ReloadAsync(null) で OK。
             var result = await _controller.ReloadAsync(prevSelectedLayerId: null, CancellationToken.None);
             ApplyReloadResult(result);
         }
@@ -167,59 +167,374 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         }
     }
 
-    // F'304 (Phase F' WF'3): CheckedListBox の item として LayerDto をラップ
-    private sealed class LayerListItem
-    {
-        public LayerDto Layer { get; }
-        public LayerListItem(LayerDto l) { Layer = l; }
-        public override string ToString() => $"{Layer.LayerId}: {Layer.LayerName} ({Layer.LayerType})";
-    }
-
-    // F301 (Phase F WF3): CheckedListBox を再構築 + VisibleLayerIds に従って初期 check 状態を復元。
-    // F'304: 表示順は OrderedLayerIds (checked 部分の z-order) + 残り (unchecked、API 順)。
-    private bool _suppressItemCheck;
+    // LG303: Controller の LayerTreeModel から TreeView を再構築 + 初期 visibility/z-order を WebGIS へ送出
     private void ApplyReloadResult(ReloadResult result)
     {
-        _suppressItemCheck = true;
-        try
-        {
-            layerList.Items.Clear();
-            var checkedSet = new HashSet<int>(_controller.OrderedLayerIds);
-            // 1) Ordered (checked) layers in z-order
-            foreach (var lid in _controller.OrderedLayerIds)
-            {
-                var l = _controller.GetLayerById(lid);
-                if (l is not null) layerList.Items.Add(new LayerListItem(l), true);
-            }
-            // 2) Remaining (unchecked) layers in API order
-            foreach (var l in result.Layers)
-            {
-                if (!checkedSet.Contains(l.LayerId))
-                {
-                    layerList.Items.Add(new LayerListItem(l), false);
-                }
-            }
-        }
-        finally
-        {
-            _suppressItemCheck = false;
-        }
+        RebuildLayerTree();
         if (result.Layers.Count == 0)
         {
             SetStatus("No layers");
             return;
         }
-        // F301: 初期 ON の layer を WebGIS にも送る (Controller 側で先頭 1 件が初期 ON 済)
+        // 初期 ON の layer を WebGIS にも送る (Controller 側で先頭 1 件が初期 ON 済)
         foreach (var lid in _controller.OrderedLayerIds)
         {
             _bridge?.Send("layer_visibility_change", new { layerId = lid, visible = true });
         }
-        // F'304: 初期 z-order も WebGIS に送る
-        if (_controller.OrderedLayerIds.Count > 0)
+        // 初期 z-order も WebGIS に送る
+        SendLayerOrderChange();
+        SetStatus($"{result.Layers.Count} layers ({_controller.OrderedLayerIds.Count} visible)");
+    }
+
+    // ====== LG303: LayerTreeModel → TreeView 同期 ======
+
+    // ツリー再構築中の AfterExpand/AfterCollapse による保存を抑止
+    private bool _suppressTreeEvents;
+
+    private void RebuildLayerTree()
+    {
+        _suppressTreeEvents = true;
+        layerTree.BeginUpdate();
+        try
         {
-            _bridge?.Send("layer_order_change", new { layerIds = _controller.OrderedLayerIds.ToArray() });
+            layerTree.Nodes.Clear();
+            AddTreeNodes(layerTree.Nodes, _controller.Tree.RootNodes);
         }
-        SetStatus($"{result.Layers.Count} layers ({_controller.VisibleLayerIds.Count} visible)");
+        finally
+        {
+            layerTree.EndUpdate();
+            _suppressTreeEvents = false;
+        }
+    }
+
+    private void AddTreeNodes(TreeNodeCollection dest, IReadOnlyList<LayerTreeNode> children)
+    {
+        foreach (var child in children)
+        {
+            switch (child)
+            {
+                case TreeGroupNode group:
+                {
+                    var node = new TreeNode(group.Name) { Tag = group };
+                    dest.Add(node);
+                    AddTreeNodes(node.Nodes, group.Children);
+                    // Expanded 復元 (子を追加した後でないと Expand が効かない)
+                    if (group.Expanded) node.Expand();
+                    break;
+                }
+                case TreeLayerNode layer:
+                {
+                    var dto = _controller.GetLayerById(layer.LayerId);
+                    var text = dto is null
+                        ? $"layer {layer.LayerId}"
+                        : $"{dto.LayerId}: {dto.LayerName} ({dto.LayerType})";
+                    dest.Add(new TreeNode(text) { Tag = layer });
+                    break;
+                }
+            }
+        }
+    }
+
+    private void SendLayerOrderChange()
+    {
+        _bridge?.Send("layer_order_change", new { layerIds = _controller.OrderedLayerIds.ToArray() });
+    }
+
+    // ====== LG303: checkbox トグル ======
+
+    // 表示 toggle: model 更新 → layer_visibility_change + layer_order_change → 永続化 (best-effort)
+    private void OnLayerVisibleToggled(int layerId)
+    {
+        var current = _controller.Tree.FindLayer(layerId)?.Visible ?? false;
+        var visible = !current;
+        _controller.SetLayerVisible(layerId, visible);
+        _bridge?.Send("layer_visibility_change", new { layerId, visible });
+        SendLayerOrderChange();
+        layerTree.Invalidate();
+        _ = SaveTreeSafelyAsync();
+        SetStatus($"Layer {layerId} {(visible ? "ON" : "OFF")} ({_controller.OrderedLayerIds.Count} visible)");
+    }
+
+    // グループ表示 toggle (3 値): Checked → 全 OFF、Unchecked/Mixed → 全 ON。
+    // 変化した layer 分の layer_visibility_change ×N + layer_order_change ×1 を送る。
+    private void OnGroupVisibleToggled(string key)
+    {
+        GroupCheckState state;
+        try
+        {
+            state = _controller.GetGroupCheckState(key);
+        }
+        catch (KeyNotFoundException)
+        {
+            return; // stale key (再構築直前の連打等) は無視
+        }
+        var visible = state != GroupCheckState.Checked;
+        var before = new HashSet<int>(_controller.OrderedLayerIds);
+        _controller.SetGroupVisible(key, visible);
+        var after = new HashSet<int>(_controller.OrderedLayerIds);
+        var changed = visible ? after.Except(before) : before.Except(after);
+        foreach (var layerId in changed)
+        {
+            _bridge?.Send("layer_visibility_change", new { layerId, visible });
+        }
+        SendLayerOrderChange();
+        layerTree.Invalidate();
+        _ = SaveTreeSafelyAsync();
+        SetStatus($"Group {(visible ? "ON" : "OFF")} ({_controller.OrderedLayerIds.Count} visible)");
+    }
+
+    // 編集/スナップ toggle: 状態保存のみ (機能配線は将来サイクル)。layer_flags_v1 に永続化。
+    private void OnLayerFlagToggled(int layerId, bool isEdit)
+    {
+        var node = _controller.Tree.FindLayer(layerId);
+        if (node is null) return;
+        if (isEdit)
+        {
+            _controller.SetLayerFlags(layerId, edit: !node.EditEnabled);
+        }
+        else
+        {
+            _controller.SetLayerFlags(layerId, snap: !node.SnapEnabled);
+        }
+        layerTree.Invalidate();
+        _ = SaveFlagsSafelyAsync();
+    }
+
+    // ====== LG303: drag-and-drop 移動 ======
+
+    private void OnLayerTreeNodeMoved(object? sender, LayerTreeNodeMovedEventArgs e)
+    {
+        try
+        {
+            if (e.LayerId is int layerId)
+            {
+                _controller.MoveLayer(layerId, e.TargetParentKey, e.TargetIndex);
+            }
+            else if (e.GroupKey is { } groupKey)
+            {
+                _controller.MoveGroup(groupKey, e.TargetParentKey, e.TargetIndex);
+            }
+            else
+            {
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException)
+        {
+            SetStatus($"move failed: {ex.Message}");
+            return;
+        }
+        RebuildLayerTree();
+        SendLayerOrderChange();
+        _ = SaveTreeSafelyAsync();
+        SetStatus("Layer tree updated");
+    }
+
+    // ====== LG303: 展開状態の永続化 ======
+
+    private void OnLayerTreeExpandedChanged(object? sender, TreeViewEventArgs e)
+    {
+        if (_suppressTreeEvents) return;
+        if (e.Node?.Tag is not TreeGroupNode group) return;
+        _controller.SetGroupExpanded(group.Key, e.Node.IsExpanded);
+        _ = SaveTreeSafelyAsync();
+    }
+
+    // ====== LG303: 右クリックメニュー (グループ作成 / 名変更 / 削除) ======
+
+    private ContextMenuStrip BuildLayerTreeContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Opening += (_, e) =>
+        {
+            menu.Items.Clear();
+            var groupTag = layerTree.SelectedNode?.Tag as TreeGroupNode;
+            var isAdmin = _session.Current?.IsAdmin ?? false;
+            // グループ上で右クリック → その配下に作成、それ以外 → ルート直下
+            var parentKey = groupTag?.Key;
+
+            menu.Items.Add(new ToolStripMenuItem("グループ作成 (自分用)", null,
+                (_, _) => CreateUserGroup(parentKey)));
+            if (isAdmin)
+            {
+                // db: グループのみ親にできる (usr: 親を選択中なら DB 上はルート直下に作る)
+                var dbParentId = ParseDbGroupId(parentKey);
+                menu.Items.Add(new ToolStripMenuItem("デフォルトグループ作成 (admin)", null,
+                    async (_, _) => await CreateDbGroupAsync(dbParentId)));
+            }
+
+            if (groupTag is not null)
+            {
+                var isUsr = groupTag.Key.StartsWith("usr:", StringComparison.Ordinal);
+                // usr: は本人がいつでも編集可。db: の rename/削除は admin のみメニュー表示
+                // (サーバの RequireRole と 2 重防御)
+                if (isUsr || isAdmin)
+                {
+                    menu.Items.Add(new ToolStripSeparator());
+                    menu.Items.Add(new ToolStripMenuItem("グループ名変更...", null,
+                        async (_, _) => await RenameGroupAsync(groupTag)));
+                    menu.Items.Add(new ToolStripMenuItem("グループ削除", null,
+                        async (_, _) => await DeleteGroupAsync(groupTag)));
+                }
+            }
+            e.Cancel = menu.Items.Count == 0;
+        };
+        return menu;
+    }
+
+    private static int? ParseDbGroupId(string? key)
+        => key is not null && key.StartsWith("db:", StringComparison.Ordinal) &&
+           int.TryParse(key.AsSpan(3), out var id)
+            ? id
+            : null;
+
+    // usr: グループ作成 (pref のみ、他ユーザに影響なし)
+    private void CreateUserGroup(string? parentKey)
+    {
+        var name = PromptForName("グループ作成 (自分用)", "");
+        if (name is null) return;
+        _controller.CreateUserGroup(name, parentKey);
+        RebuildLayerTree();
+        _ = SaveTreeSafelyAsync();
+        SetStatus($"グループ「{name}」を作成しました");
+    }
+
+    // db: グループ作成 (admin のみ。成功後 Reload でツリーに反映)
+    private async Task CreateDbGroupAsync(int? parentGroupId)
+    {
+        var name = PromptForName("デフォルトグループ作成 (全ユーザ共有)", "");
+        if (name is null) return;
+        try
+        {
+            await _api.CreateLayerGroupAsync(
+                new CreateLayerGroupRequestDto(name, parentGroupId, null), CancellationToken.None);
+            await ReloadLayersAsync();
+            SetStatus($"デフォルトグループ「{name}」を作成しました");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"group create failed: {ex.Message}");
+        }
+    }
+
+    private async Task RenameGroupAsync(TreeGroupNode group)
+    {
+        var name = PromptForName("グループ名変更", group.Name);
+        if (name is null || name == group.Name) return;
+        if (group.Key.StartsWith("usr:", StringComparison.Ordinal))
+        {
+            _controller.RenameUserGroup(group.Key, name);
+            RebuildLayerTree();
+            _ = SaveTreeSafelyAsync();
+            SetStatus($"グループ名を「{name}」に変更しました");
+            return;
+        }
+        // db: グループは admin API (成功後 Reload で全体反映、名前は DB 優先)
+        var groupId = ParseDbGroupId(group.Key);
+        if (groupId is null) return;
+        try
+        {
+            await _api.UpdateLayerGroupAsync(groupId.Value,
+                new UpdateLayerGroupRequestDto(name, null, null), CancellationToken.None);
+            await ReloadLayersAsync();
+            SetStatus($"グループ名を「{name}」に変更しました");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"group rename failed: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteGroupAsync(TreeGroupNode group)
+    {
+        var isUsr = group.Key.StartsWith("usr:", StringComparison.Ordinal);
+        var detail = isUsr
+            ? "中のレイヤと子グループは親へ移動します。"
+            : "全ユーザのデフォルトツリーから削除されます。中のレイヤはルート直下へ移動します。";
+        var answer = MessageBox.Show(this,
+            $"グループ「{group.Name}」を削除しますか?\n{detail}",
+            "グループ削除", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (answer != DialogResult.Yes) return;
+
+        if (isUsr)
+        {
+            try
+            {
+                _controller.RemoveGroup(group.Key);
+            }
+            catch (KeyNotFoundException)
+            {
+                return;
+            }
+            RebuildLayerTree();
+            _ = SaveTreeSafelyAsync();
+            SetStatus($"グループ「{group.Name}」を削除しました");
+            return;
+        }
+        var groupId = ParseDbGroupId(group.Key);
+        if (groupId is null) return;
+        try
+        {
+            await _api.DeleteLayerGroupAsync(groupId.Value, CancellationToken.None);
+            await ReloadLayersAsync();
+            SetStatus($"グループ「{group.Name}」を削除しました");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"group delete failed: {ex.Message}");
+        }
+    }
+
+    // 名前入力用の最小ダイアログ (OK で trim 後の非空文字列、キャンセル/空は null)
+    private string? PromptForName(string title, string initial)
+    {
+        using var form = new Form
+        {
+            Text = title,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(320, 88),
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ShowInTaskbar = false,
+        };
+        var box = new TextBox { Left = 12, Top = 12, Width = 296, Text = initial };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Left = 152, Top = 48, Width = 75 };
+        var cancel = new Button { Text = "キャンセル", DialogResult = DialogResult.Cancel, Left = 233, Top = 48, Width = 75 };
+        form.Controls.Add(box);
+        form.Controls.Add(ok);
+        form.Controls.Add(cancel);
+        form.AcceptButton = ok;
+        form.CancelButton = cancel;
+        if (form.ShowDialog(this) != DialogResult.OK) return null;
+        var name = box.Text.Trim();
+        return name.Length == 0 ? null : name;
+    }
+
+    // ====== LG303: 永続化 (best-effort、失敗は status bar のみ) ======
+
+    private async Task SaveTreeSafelyAsync()
+    {
+        try
+        {
+            await _controller.SaveTreeAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"save layer tree failed: {ex.Message}");
+        }
+    }
+
+    private async Task SaveFlagsSafelyAsync()
+    {
+        try
+        {
+            await _controller.SaveFlagsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"save layer flags failed: {ex.Message}");
+        }
     }
 
     // H5-102 (WH5-1): Unauthorized 復旧経路を Controller 経由に統合 (旧版の reload 二重実装を解消)
@@ -240,263 +555,10 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
             return;
         }
         Show();
-        // Controller が再 reload した結果を ComboBox に反映 (prev = null で先頭選択)
+        // Controller が再 reload した結果をツリーに反映
         ApplyReloadResult(new ReloadResult(_controller.Layers, _controller.Layers.Count > 0 ? 0 : -1));
         ApplyGuestRestriction();
         SetStatus("Re-authenticated");
-    }
-
-    // F301 (Phase F WF3): CheckedListBox の ItemCheck で layer_visibility_change を bridge 経由で WebGIS に通知。
-    // CheckedListBox.ItemCheck は **状態変更前** に発火するので、NewValue から visible を取る。
-    // F'305 (Phase F' WF'3): check 変更後に SaveLayerOrderAsync で永続化
-    // F'304 hotfix-3: drag 中に native が ItemCheck を発火するケース (DoDragDrop 後の
-    //   残留 WM_LBUTTONUP) では NewValue=CurrentValue にしてトグルそのものを抑止する。
-    private void OnLayerListItemCheck(object? sender, ItemCheckEventArgs e)
-    {
-        if (_suppressItemCheck) return;
-        if (_dragStarted)
-        {
-            // drag 中 / drag 直後: 視覚も内部状態も変更させない
-            e.NewValue = e.CurrentValue;
-            return;
-        }
-        if (e.Index < 0 || e.Index >= layerList.Items.Count) return;
-        if (layerList.Items[e.Index] is not LayerListItem item) return;
-        var layer = item.Layer;
-        var visible = e.NewValue == CheckState.Checked;
-        _controller.SetLayerVisible(layer.LayerId, visible);
-        _bridge?.Send("layer_visibility_change", new { layerId = layer.LayerId, visible });
-        // F'305: 永続化 (best-effort、失敗は status bar のみ)
-        _ = SaveLayerOrderSafelyAsync();
-        SetStatus($"Layer {layer.LayerId} {(visible ? "ON" : "OFF")} ({_controller.VisibleLayerIds.Count} visible)");
-    }
-
-    // ====== F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え ======
-    private int _dragSourceIndex = -1;
-    private Point _dragStartPoint;
-    // F'304 hotfix: drag が実際に開始されたか (threshold 超え) を追跡。
-    //   MouseUp で「drag せず click だった」と判定する場合に check toggle を発火させる。
-    private bool _dragStarted;
-    // F'304 hotfix: ドラッグ中のゴースト (マウス追従表示)
-    private DragGhostForm? _dragGhost;
-
-    // 半透明ゴースト Form (borderless / TopMost / non-activating)
-    private sealed class DragGhostForm : Form
-    {
-        public Label TextLabel { get; }
-        public DragGhostForm()
-        {
-            FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false;
-            TopMost = true;
-            StartPosition = FormStartPosition.Manual;
-            Opacity = 0.85;
-            BackColor = Color.LightYellow;
-            TextLabel = new Label
-            {
-                AutoSize = true,
-                BorderStyle = BorderStyle.FixedSingle,
-                Padding = new Padding(8, 4, 8, 4),
-                BackColor = Color.LightYellow,
-                ForeColor = Color.Black
-            };
-            Controls.Add(TextLabel);
-        }
-        protected override bool ShowWithoutActivation => true;
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                const int WS_EX_TOOLWINDOW = 0x80;
-                const int WS_EX_NOACTIVATE = 0x08000000;
-                var cp = base.CreateParams;
-                cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-                return cp;
-            }
-        }
-    }
-
-    private void OnLayerListMouseDown(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Left) return;
-        _dragSourceIndex = layerList.IndexFromPoint(e.Location);
-        _dragStartPoint = e.Location;
-        _dragStarted = false;
-    }
-
-    // F'304 hotfix-3: native の CheckOnClick=true に toggle を任せたので、
-    //   MouseUp では state のリセットだけ行う。drag 後の native MouseUp / ItemCheck は
-    //   ItemCheck ハンドラ側で _dragStarted を見てキャンセル済み。
-    //   _dragStarted のリセットは ItemCheck がここより先に走るためここで行う (ItemCheck は
-    //   WM_LBUTTONUP 処理中、MouseUp イベントはその後)。
-    private void OnLayerListMouseUp(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Left) return;
-        _dragSourceIndex = -1;
-        _dragStarted = false;
-    }
-
-    private void OnLayerListMouseMove(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Left || _dragSourceIndex < 0 || _dragStarted) return;
-        // SystemInformation.DragSize の閾値を越えたら drag 開始 (click と区別)
-        var dx = Math.Abs(e.X - _dragStartPoint.X);
-        var dy = Math.Abs(e.Y - _dragStartPoint.Y);
-        if (dx < SystemInformation.DragSize.Width && dy < SystemInformation.DragSize.Height) return;
-
-        _dragStarted = true;
-        // F'304 hotfix: ゴースト Form を表示してドラッグ中のレイヤ名をマウスに追従させる
-        if (_dragSourceIndex < layerList.Items.Count &&
-            layerList.Items[_dragSourceIndex] is LayerListItem li)
-        {
-            _dragGhost ??= new DragGhostForm();
-            _dragGhost.TextLabel.Text = $"↕  {li.Layer.LayerName}";
-            _dragGhost.Size = new Size(
-                _dragGhost.TextLabel.PreferredWidth + 4,
-                _dragGhost.TextLabel.PreferredHeight + 4);
-            _dragGhost.Location = new Point(Cursor.Position.X + 14, Cursor.Position.Y + 14);
-            _dragGhost.Show();
-        }
-        try
-        {
-            layerList.DoDragDrop(_dragSourceIndex, DragDropEffects.Move);
-        }
-        finally
-        {
-            _dragGhost?.Hide();
-            layerList.ClearDropIndicator();
-            _dragSourceIndex = -1;
-        }
-    }
-
-    private void OnLayerListDragOver(object? sender, DragEventArgs e)
-    {
-        if (e.Data?.GetDataPresent(typeof(int)) != true) return;
-        e.Effect = DragDropEffects.Move;
-        // F'304 hotfix: drop 位置を青いラインで視覚化
-        //   - カーソル下の item の上半分 → 上に挿入 (above)
-        //   - 下半分 → 下に挿入 (below)
-        //   - リスト外下方 → 末尾
-        var point = layerList.PointToClient(new Point(e.X, e.Y));
-        var idx = layerList.IndexFromPoint(point);
-        if (idx < 0)
-        {
-            // 範囲外 = 末尾
-            layerList.SetDropIndicator(layerList.Items.Count, true);
-        }
-        else
-        {
-            var rect = layerList.GetItemRectangle(idx);
-            var mid = (rect.Top + rect.Bottom) / 2;
-            var above = point.Y < mid;
-            layerList.SetDropIndicator(idx, above);
-        }
-    }
-
-    // F'304 hotfix: ドラッグがリスト外に出たら indicator を消す
-    private void OnLayerListDragLeave(object? sender, EventArgs e)
-    {
-        layerList.ClearDropIndicator();
-    }
-
-    // F'304 hotfix: ドラッグ中のカーソル変更 + ゴースト Form をマウスに追従
-    // GiveFeedback は DoDragDrop の modal loop 内で連続発火する
-    private void OnLayerListGiveFeedback(object? sender, GiveFeedbackEventArgs e)
-    {
-        e.UseDefaultCursors = false;
-        Cursor.Current = Cursors.Hand;
-        if (_dragGhost is { Visible: true })
-        {
-            _dragGhost.Location = new Point(Cursor.Position.X + 14, Cursor.Position.Y + 14);
-        }
-    }
-
-    private void OnLayerListDragDrop(object? sender, DragEventArgs e)
-    {
-        var src = (int)(e.Data?.GetData(typeof(int)) ?? -1);
-        // F'304 hotfix-2: ClearDropIndicator() より先に drop target を読む。
-        //   ClearDropIndicator() は _dropIndicatorIndex = -1 にリセットするため、
-        //   その後に GetDropTargetIndex() を呼ぶと常に -1 が返り、並べ替えが一切走らなくなる。
-        var insertAt = layerList.GetDropTargetIndex();
-        layerList.ClearDropIndicator();
-        if (src < 0 || src >= layerList.Items.Count) return;
-        if (insertAt < 0)
-        {
-            // indicator が無い (DragLeave 経由など) → 何もしない
-            return;
-        }
-        // src を取り除くと src 以降の index が 1 つずれるので調整
-        var dst = insertAt > src ? insertAt - 1 : insertAt;
-        if (dst < 0) dst = 0;
-        if (dst > layerList.Items.Count - 1) dst = layerList.Items.Count - 1;
-        if (src == dst) return;
-
-        _suppressItemCheck = true;
-        try
-        {
-            var item = layerList.Items[src];
-            var wasChecked = layerList.GetItemChecked(src);
-            layerList.Items.RemoveAt(src);
-            layerList.Items.Insert(dst, item);
-            layerList.SetItemChecked(dst, wasChecked);
-            layerList.SelectedIndex = dst;
-        }
-        finally
-        {
-            _suppressItemCheck = false;
-        }
-
-        // 新しい z-order を controller に反映 + WebGIS / 永続化に通知
-        var newOrder = new List<int>();
-        for (int i = 0; i < layerList.Items.Count; i++)
-        {
-            if (layerList.GetItemChecked(i) &&
-                layerList.Items[i] is LayerListItem li)
-            {
-                newOrder.Add(li.Layer.LayerId);
-            }
-        }
-        try
-        {
-            _controller.ReorderLayers(newOrder);
-            _bridge?.Send("layer_order_change", new { layerIds = newOrder.ToArray() });
-            _ = SaveLayerOrderSafelyAsync();
-            SetStatus($"Reordered: {string.Join(',', newOrder)}");
-        }
-        catch (InvalidOperationException ex)
-        {
-            SetStatus($"reorder failed: {ex.Message}");
-        }
-    }
-
-    // F'305: 永続化 (best-effort)
-    private async Task SaveLayerOrderSafelyAsync()
-    {
-        try
-        {
-            await _controller.SaveLayerOrderAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"save layer order failed: {ex.Message}");
-        }
-    }
-
-    // F'305: 起動時に永続化された order を適用 (best-effort、失敗時は API 順のまま)
-    private async Task ApplyPersistedLayerOrderSafelyAsync()
-    {
-        try
-        {
-            var persisted = await _controller.LoadLayerOrderAsync(CancellationToken.None);
-            if (persisted is null || persisted.Count == 0) return;
-            _controller.ApplyPersistedLayerOrder(persisted);
-            // CheckedListBox を再構築して新 order を反映
-            ApplyReloadResult(new ReloadResult(_controller.Layers, 0));
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"load layer order failed: {ex.Message}");
-        }
     }
 
     // D401 (WD4): bridge handler を features_selected (entityIds 配列) 受領に書き換え。

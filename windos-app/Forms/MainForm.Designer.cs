@@ -11,9 +11,10 @@ partial class MainForm
     private Panel rightPanel = null!;
     private Label layerLabel = null!;
     // F301 (Phase F WF3): 複数 layer を同時 ON/OFF できる CheckedListBox に変更
-    // 旧 layerCombo (ComboBox) は WD4 まで「単一選択」だったが、F 以降は複数表示が前提
-    // F'304 hotfix: drop indicator 描画用に DragAwareCheckedListBox (CheckedListBox 派生) に置換
-    internal DragAwareCheckedListBox layerList = null!;
+    // LG303 (Phase LG WLG3): layerList (DragAwareCheckedListBox) を LayerTreeView
+    // (owner-draw TreeView + 表示/編集/スナップ 3 checkbox + drag-drop) に置換
+    internal LayerTreeView layerTree = null!;
+    private LayerTreeHeaderPanel layerTreeHeader = null!;
     private AttributeEditorControl attributeEditor = null!;
     private StatusStrip statusStrip = null!;
     private ToolStripStatusLabel statusLabel = null!;
@@ -38,7 +39,8 @@ partial class MainForm
         webView = new WebView2();
         rightPanel = new Panel();
         layerLabel = new Label();
-        layerList = new DragAwareCheckedListBox();
+        layerTree = new LayerTreeView();
+        layerTreeHeader = new LayerTreeHeaderPanel();
         attributeEditor = new AttributeEditorControl();
         statusStrip = new StatusStrip();
         statusLabel = new ToolStripStatusLabel();
@@ -64,16 +66,13 @@ partial class MainForm
         layerLabel.Height = 20;
         layerLabel.AutoSize = false;
 
-        // F301 (Phase F WF3): layerList — 複数 ON/OFF 用 CheckedListBox
-        // F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え可能に
-        layerList.Dock = DockStyle.Top;
-        layerList.Height = 180;
-        // F'304 hotfix-3: CheckOnClick=true (native の 1-click toggle に任せる)。
-        //   drag 中の native ItemCheck は ItemCheck ハンドラ側で _dragStarted を見て
-        //   キャンセルする方式に変更。MouseUp 内 SetItemChecked の再入問題を回避。
-        layerList.CheckOnClick = true;
-        layerList.IntegralHeight = false;
-        layerList.AllowDrop = true;          // F'304: drag-and-drop 受領
+        // LG303 (Phase LG WLG3): layerTree — グループ階層 + 3 checkbox 列 + drag-drop。
+        // DrawMode / CheckBoxes / AllowDrop 等は LayerTreeView の ctor で設定済み。
+        layerTree.Dock = DockStyle.Top;
+        layerTree.Height = 260;
+        // 列ヘッダ ("表示 編集 スナップ" を checkbox 列位置に揃えて描画)
+        layerTreeHeader.Dock = DockStyle.Top;
+        layerTreeHeader.Height = 20;
 
         // attributeEditor
         attributeEditor.Dock = DockStyle.Fill;
@@ -98,9 +97,11 @@ partial class MainForm
         rightPanel.Dock = DockStyle.Right;
         rightPanel.Width = 360;
         rightPanel.Padding = new Padding(8);
-        // 追加順は「後追加が先ドック」: attributeEditor(Fill) を先に、その上に layerList, さらに上に label, asOfPanel
+        // 追加順は「後追加が先ドック」: attributeEditor(Fill) を先に、その上に layerTree,
+        // さらに上に 列ヘッダ, label, asOfPanel
         rightPanel.Controls.Add(attributeEditor);
-        rightPanel.Controls.Add(layerList);
+        rightPanel.Controls.Add(layerTree);
+        rightPanel.Controls.Add(layerTreeHeader);
         rightPanel.Controls.Add(layerLabel);
         rightPanel.Controls.Add(asOfPanel);
 

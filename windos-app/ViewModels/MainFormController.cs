@@ -1,30 +1,35 @@
 using System.Text.Json;
 using AgriGis.Desktop.Auth;
+using AgriGis.Desktop.Core.LayerTree;
 using AgriGis.Desktop.Dto;
 using AgriGis.Desktop.Services;
 
 namespace AgriGis.Desktop.ViewModels;
 
 // H5-101 (WH5-1): MainForm から layers 管理 + Unauthorized 復旧経路を切り出した Controller。
+// LG303 (Phase LG WLG3): フラットな visible set + order list を LayerTreeModel (WLG2) に置換。
 //
 // 設計:
-// - UI 非依存 (ComboBox / Form を直接操作しない)
-// - ReloadResult を返し、呼び出し側 (MainForm) が ComboBox 更新 + 選択 index 設定を行う
-// - HandleUnauthorizedAsync は MainForm からデリゲートを受け取り、復旧後に再 reload
-// - これにより MainForm の HandleUnauthorizedAsync 内の reload 重複実装を解消
+// - UI 非依存 (TreeView / Form を直接操作しない)
+// - ReloadAsync で「デフォルトツリー (GET /api/layer-groups + LayerDto.GroupId/SortOrder)
+//   × user preference (layer_tree_v1)」をマージし、layer_flags_v1 を適用する
+// - layer_tree_v1 不在時は旧 layer_order_v1 を順序 seed に 1 回限り移行 (MigrateFromFlatOrder)
+// - OrderedLayerIds = model.EnumerateVisibleLayerIdsDfs() (z-order、既存呼び出し互換)
+// - 永続化は SaveTreeAsync (layer_tree_v1) / SaveFlagsAsync (layer_flags_v1)。
+//   呼び出しタイミング (best-effort) は MainForm 側の責務
 public sealed class MainFormController
 {
     private readonly IApiClient _api;
     private readonly ISessionStore _session;
     private readonly AsOfState _asOf;
     private IReadOnlyList<LayerDto> _layers = Array.Empty<LayerDto>();
-    // F302 (Phase F WF3): 複数 layer 同時表示の ON/OFF 状態。LayerId の集合。
-    private readonly HashSet<int> _visibleLayerIds = new();
-    // F'303 (Phase F' WF'3): z-order 保持の順序付きリスト (上位 = 前面)。
-    //   不変条件: _orderedLayerIds は _visibleLayerIds と要素一致 (set としては等価)。
-    private readonly List<int> _orderedLayerIds = new();
-    // F'305 (Phase F' WF'3): 永続化対象キー
+    private LayerTreeModel _tree = new();
+
+    /// <summary>旧フラット順序キー (deprecated)。layer_tree_v1 不在時の移行 seed にのみ使用。</summary>
     public const string LayerOrderPreferenceKey = "layer_order_v1";
+
+    /// <summary>編集/スナップフラグの永続化キー ({"5": {"edit": true, "snap": false}} 形式)。</summary>
+    public const string FlagsPreferenceKey = "layer_flags_v1";
 
     public MainFormController(IApiClient api, ISessionStore session, AsOfState asOf)
     {
@@ -39,50 +44,201 @@ public sealed class MainFormController
     /// <summary>現在の session (read only)。</summary>
     public Session? CurrentSession => _session.Current;
 
-    /// <summary>F302: 現在 ON になっている layer_id 集合 (read only snapshot)。</summary>
-    public IReadOnlySet<int> VisibleLayerIds => _visibleLayerIds;
+    /// <summary>LG303: 現在のレイヤツリー (read アクセス用。構造変更は本 Controller 経由で行う)。</summary>
+    public LayerTreeModel Tree => _tree;
 
-    /// <summary>F'303: 現在 ON の layer_id を z-order 順 (上位 = 前面) で取得。</summary>
-    public IReadOnlyList<int> OrderedLayerIds => _orderedLayerIds;
+    /// <summary>F302 互換: 現在 ON になっている layer_id 集合 (snapshot)。</summary>
+    public IReadOnlySet<int> VisibleLayerIds => new HashSet<int>(_tree.EnumerateVisibleLayerIdsDfs());
 
-    /// <summary>F302: layer 表示状態の切替 (CheckedListBox の ItemCheck から呼ぶ)。</summary>
-    /// <remarks>F'303: ON で追加 (末尾)、OFF で削除。_orderedLayerIds も同期維持。</remarks>
+    /// <summary>
+    /// F'303 互換: 現在 ON の layer_id を z-order 順 (上位 = 前面) で取得。
+    /// LG303 以降は「ツリーの可視レイヤを上から DFS で列挙した順」(= layer_order_change にそのまま渡す)。
+    /// </summary>
+    public IReadOnlyList<int> OrderedLayerIds => _tree.EnumerateVisibleLayerIdsDfs();
+
+    // ---------------------------------------------------------------
+    // ツリー操作 (model 委譲)
+    // ---------------------------------------------------------------
+
+    /// <summary>layer 表示状態の切替。未知の layerId は無視。</summary>
     public void SetLayerVisible(int layerId, bool visible)
+        => _tree.SetLayerVisible(layerId, visible);
+
+    /// <summary>編集/スナップフラグ (null の引数は変更しない)。未知の layerId は無視。</summary>
+    public void SetLayerFlags(int layerId, bool? edit = null, bool? snap = null)
+        => _tree.SetLayerFlags(layerId, edit, snap);
+
+    /// <summary>グループ配下の全子孫レイヤの Visible を一括設定する。</summary>
+    public void SetGroupVisible(string key, bool visible)
+        => _tree.SetGroupVisible(key, visible);
+
+    /// <summary>グループの 3 値チェック状態 (子孫レイヤの Visible 集計)。</summary>
+    public GroupCheckState GetGroupCheckState(string key)
+        => _tree.GetGroupCheckState(key);
+
+    /// <summary>グループの展開状態を記録する (layer_tree_v1 に保存される)。</summary>
+    public void SetGroupExpanded(string key, bool expanded)
+        => _tree.SetGroupExpanded(key, expanded);
+
+    /// <summary>レイヤを parentKey (null=ルート) の order 位置へ移動する。</summary>
+    public void MoveLayer(int layerId, string? parentKey, int order)
+        => _tree.MoveLayer(layerId, parentKey, order);
+
+    /// <summary>グループ移動。自分自身/子孫への移動は InvalidOperationException。</summary>
+    public void MoveGroup(string key, string? parentKey, int order)
+        => _tree.MoveGroup(key, parentKey, order);
+
+    /// <summary>ユーザ独自グループ (usr:xxxx) を作成し key を返す。pref のみ、DB には作らない。</summary>
+    public string CreateUserGroup(string name, string? parentKey)
+        => _tree.CreateUserGroup(name, parentKey);
+
+    /// <summary>グループ削除 (中身は親へ退避)。usr: は pref のみ、db: は admin API 成功後の Reload で反映。</summary>
+    public void RemoveGroup(string key)
+        => _tree.RemoveGroup(key);
+
+    /// <summary>ユーザ独自グループ (usr:) の改名。db: グループは DB 側が正なので対象外。</summary>
+    public void RenameUserGroup(string key, string name)
     {
-        if (visible)
+        if (!key.StartsWith("usr:", StringComparison.Ordinal)) return;
+        var group = _tree.FindGroup(key);
+        if (group is not null) group.Name = name;
+    }
+
+    /// <summary>F302: layer_id から layer 情報を取得 (見つからなければ null)。</summary>
+    public LayerDto? GetLayerById(int layerId)
+    {
+        for (int i = 0; i < _layers.Count; i++)
         {
-            if (_visibleLayerIds.Add(layerId))
-            {
-                _orderedLayerIds.Add(layerId);
-            }
+            if (_layers[i].LayerId == layerId) return _layers[i];
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------
+    // Reload (ツリー構築 + マージ + flags 適用)
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// API から layer 一覧 + グループ一覧を再取得し、ツリーを再構築する。
+    /// - defaultTree = layer-groups (key "db:N") + LayerDto.GroupId/SortOrder
+    /// - layer_tree_v1 があれば Merge、無ければ layer_order_v1 を seed に移行 (1 回限り)
+    /// - 再 reload では現セッションの表示 ON 状態を引き継ぐ (削除された layer は落ちる)
+    /// - 初回 (可視レイヤ 0 件) は先頭 layer を初期 ON (既存挙動維持)
+    /// - layer_flags_v1 の編集/スナップフラグを適用
+    /// </summary>
+    public async Task<ReloadResult> ReloadAsync(int? prevSelectedLayerId, CancellationToken ct)
+    {
+        var prevVisible = _tree.EnumerateVisibleLayerIdsDfs();
+
+        _layers = await _api.GetLayersAsync(_asOf.Current, ct);
+        var groups = await _api.GetLayerGroupsAsync(ct);
+        var defaultTree = BuildDefaultTree(groups, _layers);
+        var availableIds = _layers.Select(l => l.LayerId).ToList();
+
+        var treePref = await _api.GetUserPreferenceAsync(LayerTreeModel.PreferenceKey, ct);
+        if (treePref is not null)
+        {
+            _tree = LayerTreeModel.Merge(defaultTree, treePref.Value.GetRawText(), availableIds);
         }
         else
         {
-            if (_visibleLayerIds.Remove(layerId))
-            {
-                _orderedLayerIds.Remove(layerId);
-            }
+            // R4: 旧 layer_order_v1 からの移行 (layer_tree_v1 不在時 1 回限り)。
+            // MigrateFromFlatOrder が flatOrder 中のレイヤを Visible=true にする。
+            var flatOrder = await LoadFlatLayerOrderAsync(ct);
+            _tree = flatOrder is { Count: > 0 }
+                ? LayerTreeModel.MigrateFromFlatOrder(defaultTree, flatOrder)
+                : LayerTreeModel.Merge(defaultTree, null, availableIds);
         }
-    }
 
-    /// <summary>F'303 (Phase F' WF'3): z-order を並べ替える。
-    /// newOrder は _visibleLayerIds と要素一致している必要がある (差分があれば例外)。
-    /// </summary>
-    public void ReorderLayers(IReadOnlyList<int> newOrder)
-    {
-        if (newOrder.Count != _orderedLayerIds.Count)
-            throw new InvalidOperationException("ReorderLayers: count mismatch");
-        foreach (var id in newOrder)
+        // セッション中の表示 ON 状態を引き継ぐ (削除済 layer は新ツリーに無いので自然に落ちる)
+        foreach (var id in prevVisible)
         {
-            if (!_visibleLayerIds.Contains(id))
-                throw new InvalidOperationException($"ReorderLayers: unknown layerId {id}");
+            _tree.SetLayerVisible(id, true);
         }
-        _orderedLayerIds.Clear();
-        _orderedLayerIds.AddRange(newOrder);
+
+        // 初回 (可視 0 件 + 層がある) は先頭を ON — 既存挙動維持。
+        // 移行で visible が立った場合はそちらを優先する。
+        if (_layers.Count > 0 && _tree.EnumerateVisibleLayerIdsDfs().Count == 0)
+        {
+            _tree.SetLayerVisible(_layers[0].LayerId, true);
+        }
+
+        await ApplyFlagsPreferenceAsync(ct);
+
+        var restoreIndex = ComputeRestoreIndex(_layers, prevSelectedLayerId);
+        return new ReloadResult(_layers, restoreIndex);
     }
 
-    /// <summary>F'305: 永続化された layer 順序を取得 (API 呼び出し、未設定時 null)。</summary>
-    public async Task<IReadOnlyList<int>?> LoadLayerOrderAsync(CancellationToken ct)
+    /// <summary>LayerGroupDto + LayerDto.GroupId/SortOrder からデフォルトツリーを組み立てる。</summary>
+    private static LayerTreeModel BuildDefaultTree(
+        IReadOnlyList<LayerGroupDto> groups, IReadOnlyList<LayerDto> layers)
+        => LayerTreeModel.Build(
+            groups.Select(g => new TreeGroupDefinition(
+                Key: $"db:{g.GroupId}",
+                Name: g.GroupName,
+                ParentKey: g.ParentGroupId is int p ? $"db:{p}" : null,
+                Order: g.SortOrder)),
+            layers.Select(l => new TreeLayerPlacement(
+                LayerId: l.LayerId,
+                ParentKey: l.GroupId is int gid ? $"db:{gid}" : null,
+                Order: l.SortOrder)));
+
+    // ---------------------------------------------------------------
+    // 永続化 (layer_tree_v1 / layer_flags_v1 / 旧 layer_order_v1)
+    // ---------------------------------------------------------------
+
+    /// <summary>現在のツリー構造を layer_tree_v1 として永続化する。</summary>
+    public Task SaveTreeAsync(CancellationToken ct)
+    {
+        using var doc = JsonDocument.Parse(_tree.ToPreferenceJson());
+        return _api.PutUserPreferenceAsync(LayerTreeModel.PreferenceKey,
+            new UserPreferencePutDto(doc.RootElement.Clone()), ct);
+    }
+
+    /// <summary>編集/スナップフラグを layer_flags_v1 として永続化する (どちらかが ON のレイヤのみ)。</summary>
+    public Task SaveFlagsAsync(CancellationToken ct)
+    {
+        var flags = new Dictionary<string, Dictionary<string, bool>>();
+        foreach (var layer in _tree.EnumerateLayerNodes())
+        {
+            if (!layer.EditEnabled && !layer.SnapEnabled) continue;
+            flags[layer.LayerId.ToString()] = new Dictionary<string, bool>
+            {
+                ["edit"] = layer.EditEnabled,
+                ["snap"] = layer.SnapEnabled,
+            };
+        }
+        var json = JsonSerializer.SerializeToElement(flags);
+        return _api.PutUserPreferenceAsync(FlagsPreferenceKey, new UserPreferencePutDto(json), ct);
+    }
+
+    /// <summary>layer_flags_v1 を読み、現在のツリーに適用する (未知 id / 不正値は寛容に無視)。</summary>
+    private async Task ApplyFlagsPreferenceAsync(CancellationToken ct)
+    {
+        var pref = await _api.GetUserPreferenceAsync(FlagsPreferenceKey, ct);
+        if (pref is null || pref.Value.ValueKind != JsonValueKind.Object) return;
+        foreach (var prop in pref.Value.EnumerateObject())
+        {
+            if (!int.TryParse(prop.Name, out var layerId)) continue;
+            if (prop.Value.ValueKind != JsonValueKind.Object) continue;
+            bool? edit = null;
+            bool? snap = null;
+            if (prop.Value.TryGetProperty("edit", out var e) &&
+                e.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                edit = e.GetBoolean();
+            }
+            if (prop.Value.TryGetProperty("snap", out var s) &&
+                s.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                snap = s.GetBoolean();
+            }
+            _tree.SetLayerFlags(layerId, edit, snap);
+        }
+    }
+
+    /// <summary>旧 layer_order_v1 (可視レイヤ id のフラット順序) を読む。未設定/不正は null。</summary>
+    private async Task<IReadOnlyList<int>?> LoadFlatLayerOrderAsync(CancellationToken ct)
     {
         var pref = await _api.GetUserPreferenceAsync(LayerOrderPreferenceKey, ct);
         if (pref is null) return null;
@@ -96,77 +252,9 @@ public sealed class MainFormController
         return ids;
     }
 
-    /// <summary>F'305: 現在の OrderedLayerIds を永続化。</summary>
-    public Task SaveLayerOrderAsync(CancellationToken ct)
-    {
-        var json = JsonSerializer.SerializeToElement(_orderedLayerIds);
-        return _api.PutUserPreferenceAsync(LayerOrderPreferenceKey,
-            new UserPreferencePutDto(json), ct);
-    }
-
-    /// <summary>F302: layer_id から layer 情報を取得 (見つからなければ null)。</summary>
-    /// <remarks>AttributeEditor の canEdit 判定で使用。</remarks>
-    public LayerDto? GetLayerById(int layerId)
-    {
-        for (int i = 0; i < _layers.Count; i++)
-        {
-            if (_layers[i].LayerId == layerId) return _layers[i];
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// API から layer 一覧を再取得し、以前の選択 layer_id を維持できる restore index を返す。
-    /// F302: VisibleLayerIds は再 reload しても保持 (既に削除された layer は集合から落とす)。
-    /// 初回 (まだ集合が空) の場合は、先頭 1 件を初期 ON にする。
-    /// </summary>
-    public async Task<ReloadResult> ReloadAsync(int? prevSelectedLayerId, CancellationToken ct)
-    {
-        _layers = await _api.GetLayersAsync(_asOf.Current, ct);
-        // F302/F'303: 既存 _visibleLayerIds のうち、現在 _layers に存在しないものを削除 (両方同期)
-        var availableIds = new HashSet<int>(_layers.Select(l => l.LayerId));
-        _visibleLayerIds.RemoveWhere(id => !availableIds.Contains(id));
-        _orderedLayerIds.RemoveAll(id => !availableIds.Contains(id));
-        // 初回ロード時 (集合が空 + 層がある) は先頭を ON
-        if (_visibleLayerIds.Count == 0 && _layers.Count > 0)
-        {
-            _visibleLayerIds.Add(_layers[0].LayerId);
-            _orderedLayerIds.Add(_layers[0].LayerId);
-        }
-        var restoreIndex = ComputeRestoreIndex(_layers, prevSelectedLayerId);
-        return new ReloadResult(_layers, restoreIndex);
-    }
-
-    /// <summary>F'305 (Phase F' WF'3): 永続化された順序を適用 (起動時に呼ぶ)。
-    /// 現在の _layers に存在する layer_id のみ採用、存在しないものは無視。
-    /// 永続化された集合外の layer は順序の末尾に追加 (新規 layer)。
-    /// </summary>
-    public void ApplyPersistedLayerOrder(IReadOnlyList<int> persistedOrder)
-    {
-        var availableIds = new HashSet<int>(_layers.Select(l => l.LayerId));
-        var prevVisible = new HashSet<int>(_visibleLayerIds);
-        _visibleLayerIds.Clear();
-        _orderedLayerIds.Clear();
-
-        // 永続化順を反映 (available + 元 visible だったもののみ)
-        foreach (var id in persistedOrder)
-        {
-            if (availableIds.Contains(id) && prevVisible.Contains(id))
-            {
-                _visibleLayerIds.Add(id);
-                _orderedLayerIds.Add(id);
-            }
-        }
-        // 元 visible だが永続化順に無いもの (新規 layer 等) は末尾に追加
-        foreach (var id in prevVisible)
-        {
-            if (availableIds.Contains(id) && !_visibleLayerIds.Contains(id))
-            {
-                _visibleLayerIds.Add(id);
-                _orderedLayerIds.Add(id);
-            }
-        }
-    }
+    // ---------------------------------------------------------------
+    // Unauthorized 復旧
+    // ---------------------------------------------------------------
 
     /// <summary>
     /// 401 検知時のユーザー再認証フロー。
@@ -180,8 +268,8 @@ public sealed class MainFormController
         _session.Clear();
         var success = showLoginAndReturnSuccess();
         if (!success) return false;
-        // 再ログイン後の reload (prevSelectedLayerId = null で先頭選択)
-        _layers = await _api.GetLayersAsync(_asOf.Current, ct);
+        // 再ログイン後の reload (LG303: ツリーも再構築する)
+        await ReloadAsync(prevSelectedLayerId: null, ct);
         return true;
     }
 
@@ -202,7 +290,7 @@ public sealed class MainFormController
 }
 
 /// <summary>
-/// ReloadAsync の結果。呼び出し側 (MainForm) が ComboBox 更新と
-/// SelectedIndex 設定に使う。
+/// ReloadAsync の結果。呼び出し側 (MainForm) がツリー再構築と
+/// 初期 visibility/order 送出に使う。
 /// </summary>
 public sealed record ReloadResult(IReadOnlyList<LayerDto> Layers, int RestoreIndex);

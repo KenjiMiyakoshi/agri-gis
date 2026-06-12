@@ -69,4 +69,12 @@ public interface IApiClient
     //   GET: 404 → null を返却 (未設定扱い)、その他例外はそのまま投出
     Task<UserPreferenceDto?> GetUserPreferenceAsync(string key, CancellationToken ct);
     Task<UserPreferenceDto> PutUserPreferenceAsync(string key, UserPreferencePutDto req, CancellationToken ct);
+
+    // LG303 (Phase LG WLG3): レイヤグループ (WLG1 API のクライアント)
+    //   GetLayerGroupsAsync は authenticated、それ以外は admin 専用 (非 admin は 403)
+    Task<IReadOnlyList<LayerGroupDto>> GetLayerGroupsAsync(CancellationToken ct);
+    Task<LayerGroupDto> CreateLayerGroupAsync(CreateLayerGroupRequestDto req, CancellationToken ct);
+    Task<LayerGroupDto> UpdateLayerGroupAsync(int groupId, UpdateLayerGroupRequestDto req, CancellationToken ct);
+    Task DeleteLayerGroupAsync(int groupId, CancellationToken ct);
+    Task<LayerGroupAssignmentDto> AssignLayerToGroupAsync(int layerId, AssignLayerGroupRequestDto req, CancellationToken ct);
 }

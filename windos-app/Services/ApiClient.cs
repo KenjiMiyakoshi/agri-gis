@@ -273,6 +273,50 @@ public sealed class ApiClient : IApiClient
         return (await res.Content.ReadFromJsonAsync<UserPreferenceDto>(JsonOpts, ct))!;
     }
 
+    // ----- LG303 (Phase LG WLG3): レイヤグループ -----
+
+    public async Task<IReadOnlyList<LayerGroupDto>> GetLayerGroupsAsync(CancellationToken ct)
+    {
+        using var res = await _http.GetAsync("/api/layer-groups", ct);
+        await EnsureSuccessAsync(res, ct);
+        var list = await res.Content.ReadFromJsonAsync<List<LayerGroupDto>>(JsonOpts, ct);
+        return list ?? new List<LayerGroupDto>();
+    }
+
+    public async Task<LayerGroupDto> CreateLayerGroupAsync(CreateLayerGroupRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var res = await _http.PostAsync("/api/admin/layer-groups", content, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerGroupDto>(JsonOpts, ct))!;
+    }
+
+    public async Task<LayerGroupDto> UpdateLayerGroupAsync(int groupId, UpdateLayerGroupRequestDto req, CancellationToken ct)
+    {
+        // null プロパティは WhenWritingNull で省略 → API 側 PATCH の「未指定 = 変更なし」と整合
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var msg = new HttpRequestMessage(HttpMethod.Patch, $"/api/admin/layer-groups/{groupId}") { Content = content };
+        using var res = await _http.SendAsync(msg, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerGroupDto>(JsonOpts, ct))!;
+    }
+
+    public async Task DeleteLayerGroupAsync(int groupId, CancellationToken ct)
+    {
+        using var res = await _http.DeleteAsync($"/api/admin/layer-groups/{groupId}", ct);
+        await EnsureSuccessAsync(res, ct);
+    }
+
+    public async Task<LayerGroupAssignmentDto> AssignLayerToGroupAsync(
+        int layerId, AssignLayerGroupRequestDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var msg = new HttpRequestMessage(HttpMethod.Put, $"/api/admin/layers/{layerId}/group") { Content = content };
+        using var res = await _http.SendAsync(msg, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<LayerGroupAssignmentDto>(JsonOpts, ct))!;
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage res, CancellationToken ct)
     {
         if (res.IsSuccessStatusCode) return;

@@ -4,6 +4,8 @@ namespace AgriGis.Desktop.Dto;
 // F201 (Phase F WF2): CanEdit を追加。WinForms 側で AttributeEditor の read-only 制御に使う。
 //   - JSON 互換: 古い API (canEdit 無し) からのレスポンスは canEdit=false にデシリアライズされる
 //     (API 側は Phase F 以降 canEdit を必ず返すので実害なし)
+// LG303 (Phase LG WLG3): GroupId / SortOrder を追加 (API LG105 の additive 変更ミラー)。
+//   - GroupId = null はルート直下。デフォルトツリー構築 (key "db:{GroupId}") に使う
 public sealed record LayerDto(
     int LayerId,
     string LayerName,
@@ -13,7 +15,9 @@ public sealed record LayerDto(
     DateTimeOffset CreatedAt,
     int SchemaVersion,
     LayerSchemaDto Schema,
-    bool CanEdit = false
+    bool CanEdit = false,
+    int? GroupId = null,
+    int SortOrder = 0
 );
 
 public sealed record LayerSchemaDto(IReadOnlyList<SchemaFieldDto> Fields);
