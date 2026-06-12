@@ -22,7 +22,22 @@ public partial class LayerAdminForm : Form
         deleteButton.Click += async (_, _) => await DeleteSelectedAsync();
         refreshButton.Click += async (_, _) => await LoadAsync();
         themeEditButton.Click += (_, _) => OpenThemeEditor();
+        // F305 (Phase F WF3): 権限管理ダイアログを開く (admin 限定、本ボタンは admin Visible 制御)
+        permButton.Click += (_, _) => OpenPermissionsEditor();
         closeButton.Click += (_, _) => Close();
+    }
+
+    // F305 (Phase F WF3): admin 以外は権限管理ボタンを非表示。
+    // サーバ側でも RequireRole("admin") で 2 重防御。
+    public void SetAdminVisibility(bool isAdmin)
+    {
+        permButton.Visible = isAdmin;
+    }
+
+    private void OpenPermissionsEditor()
+    {
+        using var form = _sp.GetRequiredService<OrgPermissionsForm>();
+        form.ShowDialog(this);
     }
 
     protected override async void OnLoad(EventArgs e)

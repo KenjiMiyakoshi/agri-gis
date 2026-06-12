@@ -11,6 +11,8 @@ partial class LayerAdminForm
     private ToolStripButton deleteButton = null!;
     private ToolStripButton refreshButton = null!;
     private ToolStripButton themeEditButton = null!;
+    // F305 (Phase F WF3): 組織×レイヤ権限管理ダイアログを開くボタン (admin のみ Visible)
+    internal ToolStripButton permButton = null!;
     private ToolStripButton closeButton = null!;
     private StatusStrip statusStrip = null!;
     private ToolStripStatusLabel statusLabel = null!;
@@ -31,6 +33,7 @@ partial class LayerAdminForm
         deleteButton = new ToolStripButton();
         refreshButton = new ToolStripButton();
         themeEditButton = new ToolStripButton();
+        permButton = new ToolStripButton();
         closeButton = new ToolStripButton();
         grid = new DataGridView();
         statusStrip = new StatusStrip();
@@ -49,11 +52,14 @@ partial class LayerAdminForm
         refreshButton.DisplayStyle = ToolStripItemDisplayStyle.Text;
         themeEditButton.Text = "テーマ編集 (WebGIS)";
         themeEditButton.DisplayStyle = ToolStripItemDisplayStyle.Text;
+        // F305 (Phase F WF3): 権限管理ボタン (admin Visible は LayerAdminForm.cs で制御)
+        permButton.Text = "権限管理...";
+        permButton.DisplayStyle = ToolStripItemDisplayStyle.Text;
         closeButton.Text = "閉じる";
         closeButton.DisplayStyle = ToolStripItemDisplayStyle.Text;
         closeButton.Alignment = ToolStripItemAlignment.Right;
         toolStrip.Items.AddRange(new ToolStripItem[]
-        { importButton, deleteButton, refreshButton, themeEditButton, closeButton });
+        { importButton, deleteButton, refreshButton, themeEditButton, permButton, closeButton });
         toolStrip.Dock = DockStyle.Top;
 
         grid.Dock = DockStyle.Fill;
