@@ -1,5 +1,5 @@
 import { createMap } from './map/mapInit';
-import { loadFeatures, wireLayerSelect } from './controllers/layer';
+import { loadFeatures, wireLayerSelect, addLayer, removeLayer } from './controllers/layer';
 import { wireRotation } from './controllers/rotation';
 import { wireSelection } from './controllers/selection';
 import { onMessage, sendToHost } from './bridge/webviewBridge';
@@ -7,18 +7,21 @@ import type {
   AsOfChangePayload,
   AuthTokenPayload,
   FeaturesReloadPayload,
-  LayerSelectPayload
+  LayerSelectPayload,
+  LayerVisibilityChangePayload
 } from './bridge/messages';
 import { changeAsOf } from './controllers/layer';
-import { setAccessToken } from './api/client';
+import { setAccessToken, fetchLayers } from './api/client';
+import { startEventStream, stopEventStreamFor } from './controllers/eventStream';
 
 const ctx = createMap('map');
 wireRotation(ctx);
 wireSelection(ctx);
 void wireLayerSelect(ctx);
 
-// Host → Web: auth_token / layer_select / features_reload を受ける
+// Host → Web: auth_token / layer_select / layer_visibility_change / features_reload を受ける
 // D303 (WD3): layer_select で theme 引数も受領
+// F402 (Phase F WF4): layer_visibility_change を追加 (WinForms CheckedListBox の ON/OFF を反映)
 onMessage((msg) => {
   if (msg.type === 'auth_token') {
     const p = msg.payload as AuthTokenPayload;
@@ -28,6 +31,9 @@ onMessage((msg) => {
     // E401 (WE4): layer_select.asOf もあれば反映 (現在の asOf を維持する場合は省略)
     if (p.asOf !== undefined) ctx.currentAsOf = p.asOf ?? null;
     void loadFeatures(ctx, p.layerId, p.theme ?? 'default', ctx.currentAsOf);
+  } else if (msg.type === 'layer_visibility_change') {
+    const p = msg.payload as LayerVisibilityChangePayload;
+    void handleLayerVisibilityChange(p);
   } else if (msg.type === 'features_reload') {
     const p = msg.payload as FeaturesReloadPayload;
     void loadFeatures(ctx, p.layerId, ctx.currentTheme, ctx.currentAsOf);
@@ -37,6 +43,26 @@ onMessage((msg) => {
     void changeAsOf(ctx, p.asOf ?? null);
   }
 });
+
+// F402 (Phase F WF4): visible=true で addLayer + SSE 購読開始、false で removeLayer + 解除
+async function handleLayerVisibilityChange(p: LayerVisibilityChangePayload): Promise<void> {
+  if (p.visible) {
+    let sv: number | null = null;
+    try {
+      const layers = await fetchLayers(ctx.currentAsOf ?? undefined);
+      sv = layers.find(l => l.layerId === p.layerId)?.styleVersion ?? null;
+    } catch (e) {
+      console.warn('[layer_visibility_change] fetchLayers failed', e);
+    }
+    addLayer(ctx, p.layerId, p.theme ?? 'default', ctx.currentAsOf, sv);
+    // F404: 該当 layer の SSE 購読を開始 (per-layer EventSource)
+    startEventStream(ctx, p.layerId);
+  } else {
+    // F404: 解除を先に (delete 後の参照を防ぐ)
+    stopEventStreamFor(p.layerId);
+    removeLayer(ctx, p.layerId);
+  }
+}
 
 // 起動完了を Host に通知
 sendToHost({ type: 'map_ready', payload: {} });

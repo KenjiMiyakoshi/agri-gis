@@ -3,7 +3,7 @@ import type { MapContext } from '../map/mapInit';
 import type { FeaturesSelectedPayload, SelectionOverlayReadyPayload, ThemeChangePayload } from '../bridge/messages';
 import { sendToHost, onMessage } from '../bridge/webviewBridge';
 import { createSelection, getCurrentAccessToken, getFeaturesAt } from '../api/client';
-import { changeTheme } from './layer';
+import { changeTheme, getVisibleLayerIds } from './layer';
 
 // D302 (WD3): 選択 2 段パイプライン
 //   1) クリック → WMS GetFeatureInfo で entity_id 取得 (現実装は Phase D MVP として未実装)
@@ -19,23 +19,43 @@ export function wireSelection(ctx: MapContext): void {
   // hotfix 3件目: singleclick → API /layers/{id}/at で近傍 feature の entity_id 取得
   // → POST /api/selection で sid 発行 → selection overlay 表示
   // → WinForms に features_selected envelope 通知 (属性表示は WinForms 側)
+  //
+  // F403 (Phase F WF4): 全 visible layer に対し getFeaturesAt を並列実行し、
+  //   最上位 (最後に addLayer された) layer の最近接 hit を採用する。
+  //   layerStack の挿入順序 = レンダリング順 (後追加が上) を信頼する。
   ctx.map.on('singleclick', async (evt) => {
-    if (ctx.currentLayerId === null) return;
+    const visibleIds = getVisibleLayerIds(ctx);
+    if (visibleIds.length === 0) return;
     const [x, y] = evt.coordinate;  // EPSG:3857
     // 画面解像度に応じた tolerance (z=15 で約 100m、z=10 で約 3000m)
     const resolution = ctx.view.getResolution() ?? 1;
     const tolerance = resolution * 10;  // 10 pixel 相当
     try {
-      // E401 (WE4): currentAsOf を asOf 引数として伝搬
-      const hit = await getFeaturesAt(ctx.currentLayerId, x, y, tolerance, ctx.currentAsOf ?? undefined);
-      if (hit.hits.length === 0) return;
-      const entityIds = hit.hits.map((h) => h.entityId);
-      const sel = await createSelection({ entityIds });
+      // F403: 全 visible layer に並列に問い合わせ、エラーは無視
+      const results = await Promise.all(visibleIds.map(async (lid) => {
+        try {
+          return { layerId: lid, hit: await getFeaturesAt(lid, x, y, tolerance, ctx.currentAsOf ?? undefined) };
+        } catch (e) {
+          console.warn('[selection] getFeaturesAt failed', lid, e);
+          return null;
+        }
+      }));
+      // 最上位 hit を採用 (visibleIds 末尾から探索)
+      let pick: { layerId: number; entityIds: string[] } | null = null;
+      for (let i = visibleIds.length - 1; i >= 0; i--) {
+        const r = results.find(rr => rr?.layerId === visibleIds[i]);
+        if (r && r.hit.hits.length > 0) {
+          pick = { layerId: r.layerId, entityIds: r.hit.hits.map(h => h.entityId) };
+          break;
+        }
+      }
+      if (!pick) return;
+      const sel = await createSelection({ entityIds: pick.entityIds });
       setSelectionOverlay(ctx, sel.sid);
       const fsel: FeaturesSelectedPayload = {
-        entityIds,
+        entityIds: pick.entityIds,
         sid: sel.sid,
-        layerId: ctx.currentLayerId
+        layerId: pick.layerId
       };
       sendToHost({ type: 'features_selected', payload: fsel });
       const ready: SelectionOverlayReadyPayload = { sid: sel.sid, count: sel.count };
