@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AgriGis.Desktop.Auth;
 using AgriGis.Desktop.Dto;
 using AgriGis.Desktop.ViewModels;
@@ -6,11 +5,13 @@ using Xunit;
 
 namespace AgriGis.Desktop.Tests.Tests.ViewModels;
 
-// F'306 (Phase F' WF'3): MainFormController の OrderedLayerIds + ReorderLayers + 永続化 経路を検証。
+// F'306 → LG305 (Phase LG WLG3): z-order 経路を LayerTreeModel ベースに追従。
+//   OrderedLayerIds は「可視レイヤの DFS 列挙」になり、並べ替えは ReorderLayers では
+//   なく MoveLayer (ツリー内移動) で行う。
 // 3 ケース:
-//   1) SetLayerVisible で OrderedLayerIds が同期する (追加は末尾、削除は除去)
-//   2) ReorderLayers で z-order が変わる + 不整合は例外
-//   3) ApplyPersistedLayerOrder で永続化された順序を適用
+//   1) SetLayerVisible で OrderedLayerIds が同期する (順序はツリーの DFS 位置)
+//   2) MoveLayer で z-order が変わる + 未知 id は例外
+//   3) 非表示レイヤは OrderedLayerIds に現れない (ツリー位置は保持)
 public sealed class MainFormControllerOrderTests
 {
     private static LayerDto MakeLayer(int id, bool canEdit = false) =>
@@ -45,7 +46,7 @@ public sealed class MainFormControllerOrderTests
     }
 
     [Fact]
-    public async Task ReorderLayers_ChangesZOrder_AndRejectsMismatch()
+    public async Task MoveLayer_ChangesZOrder_AndRejectsUnknownId()
     {
         var api = new FakeApiClient
         {
@@ -56,19 +57,16 @@ public sealed class MainFormControllerOrderTests
         ctrl.SetLayerVisible(2, true);
         ctrl.SetLayerVisible(3, true);
 
-        // 正常: 順序変更
-        ctrl.ReorderLayers(new[] { 3, 1, 2 });
+        // 正常: 3 をルート先頭へ移動 → DFS = [3, 1, 2]
+        ctrl.MoveLayer(3, parentKey: null, order: 0);
         Assert.Equal(new[] { 3, 1, 2 }, ctrl.OrderedLayerIds);
 
-        // 異常: 要素不一致
-        Assert.Throws<InvalidOperationException>(() =>
-            ctrl.ReorderLayers(new[] { 1, 2 })); // count mismatch
-        Assert.Throws<InvalidOperationException>(() =>
-            ctrl.ReorderLayers(new[] { 1, 2, 999 })); // unknown
+        // 異常: 未知 layerId
+        Assert.Throws<KeyNotFoundException>(() => ctrl.MoveLayer(999, null, 0));
     }
 
     [Fact]
-    public async Task ApplyPersistedLayerOrder_AppliesIntersectionInOrder()
+    public async Task HiddenLayer_KeepsTreePosition_ButNotInOrderedIds()
     {
         var api = new FakeApiClient
         {
@@ -78,13 +76,13 @@ public sealed class MainFormControllerOrderTests
         await ctrl.ReloadAsync(null, CancellationToken.None);
         ctrl.SetLayerVisible(2, true);
         ctrl.SetLayerVisible(3, true);
-        // 現在 visible = {1, 2, 3} order=[1,2,3]
+        ctrl.SetLayerVisible(2, false);
 
-        // 永続化: [3, 1, 999] (999 は存在しない、2 は欠落)
-        ctrl.ApplyPersistedLayerOrder(new[] { 3, 1, 999 });
+        // 非表示の 2 はツリーには残る (再 ON で同じ位置に戻る) が z-order からは除外
+        Assert.Equal(new[] { 1, 2, 3 }, ctrl.Tree.EnumerateAllLayerIds());
+        Assert.Equal(new[] { 1, 3 }, ctrl.OrderedLayerIds);
 
-        // 期待: 元 visible × persisted の積集合を persisted 順で → [3, 1]、
-        //       元 visible だが persisted に無い 2 は末尾に追加 → [3, 1, 2]
-        Assert.Equal(new[] { 3, 1, 2 }, ctrl.OrderedLayerIds);
+        ctrl.SetLayerVisible(2, true);
+        Assert.Equal(new[] { 1, 2, 3 }, ctrl.OrderedLayerIds);
     }
 }

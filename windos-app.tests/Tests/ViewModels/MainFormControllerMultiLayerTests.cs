@@ -42,10 +42,18 @@ public sealed class MainFormControllerMultiLayerTests
         Assert.Contains(1, ctrl.VisibleLayerIds);
     }
 
+    // LG305 (Phase LG WLG3): LayerTreeModel ベースに追従。
+    // 未知 layerId (ツリーに無い) の SetLayerVisible は寛容に無視されるため reload 後に検証する。
     [Fact]
-    public void SetLayerVisible_AddsAndRemovesFromSet()
+    public async Task SetLayerVisible_AddsAndRemovesFromSet()
     {
-        var ctrl = NewController(new FakeApiClient());
+        var api = new FakeApiClient
+        {
+            GetLayersImpl = _ => new[] { MakeLayer(5), MakeLayer(7) }
+        };
+        var ctrl = NewController(api);
+        await ctrl.ReloadAsync(null, CancellationToken.None);
+
         ctrl.SetLayerVisible(5, true);
         ctrl.SetLayerVisible(7, true);
         Assert.Contains(5, ctrl.VisibleLayerIds);
@@ -54,6 +62,10 @@ public sealed class MainFormControllerMultiLayerTests
         ctrl.SetLayerVisible(5, false);
         Assert.DoesNotContain(5, ctrl.VisibleLayerIds);
         Assert.Contains(7, ctrl.VisibleLayerIds);
+
+        // ツリーに無い layerId は無視 (落ちない)
+        ctrl.SetLayerVisible(999, true);
+        Assert.DoesNotContain(999, ctrl.VisibleLayerIds);
     }
 
     [Fact]
