@@ -1,6 +1,9 @@
 namespace AgriGis.Desktop.Dto;
 
 // API record と命名一致 (camelCase JSON は JsonSerializerOptions で対応)
+// F201 (Phase F WF2): CanEdit を追加。WinForms 側で AttributeEditor の read-only 制御に使う。
+//   - JSON 互換: 古い API (canEdit 無し) からのレスポンスは canEdit=false にデシリアライズされる
+//     (API 側は Phase F 以降 canEdit を必ず返すので実害なし)
 public sealed record LayerDto(
     int LayerId,
     string LayerName,
@@ -9,7 +12,8 @@ public sealed record LayerDto(
     bool IsShared,
     DateTimeOffset CreatedAt,
     int SchemaVersion,
-    LayerSchemaDto Schema
+    LayerSchemaDto Schema,
+    bool CanEdit = false
 );
 
 public sealed record LayerSchemaDto(IReadOnlyList<SchemaFieldDto> Fields);

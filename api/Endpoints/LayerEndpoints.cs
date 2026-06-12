@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgriGis.Api.Auth;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
 using AgriGis.Api.Json;
@@ -122,51 +123,116 @@ public static class LayerEndpoints
         // 0205 + E201 (WE2): GET /api/layers?asOf=YYYY-MM-DD
         // asOf 無し: layers の active 行のみ (valid_to='9999-12-31')
         // asOf あり: layers + layer_history UNION ALL で valid_from <= asOf < valid_to を絞る
-        group.MapGet("/", async (string? asOf, NpgsqlDataSource db) =>
+        // F201 (Phase F WF2): admin role 以外は org_layer_permission で can_view フィルタ +
+        //                      can_edit を SELECT に含める。admin は全件返却 + canEdit=true。
+        group.MapGet("/", async (string? asOf, ICurrentUser user, NpgsqlDataSource db) =>
         {
             var asOfDate = AsOfParser.TryParse(asOf);
+            var isAdmin = user.HasRole("admin");
             string sql;
             if (asOfDate is null)
             {
                 // D'101 (WD'1): styleVersion を LEFT JOIN で取得 (現在 active な layer_style_version)
-                sql = @"
-                    SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
-                           l.schema_version, l.schema_json,
-                           COALESCE(lsv.style_version, 1) AS style_version
-                      FROM layers l
-                      LEFT JOIN layer_style_version lsv
-                        ON lsv.layer_id = l.layer_id
-                       AND lsv.valid_to = '9999-12-31'::date
-                     WHERE l.valid_to = '9999-12-31'::date
-                       AND l.valid_to = '9999-12-31'::date
-                     ORDER BY l.layer_id";
+                // F201: admin は全 layer + canEdit=true、それ以外は org_layer_permission JOIN
+                if (isAdmin)
+                {
+                    sql = @"
+                        SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
+                               l.schema_version, l.schema_json,
+                               COALESCE(lsv.style_version, 1) AS style_version,
+                               true AS can_edit
+                          FROM layers l
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_to = '9999-12-31'::date
+                         WHERE l.valid_to = '9999-12-31'::date
+                         ORDER BY l.layer_id";
+                }
+                else
+                {
+                    sql = @"
+                        SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
+                               l.schema_version, l.schema_json,
+                               COALESCE(lsv.style_version, 1) AS style_version,
+                               p.can_edit
+                          FROM layers l
+                          INNER JOIN org_layer_permission p
+                            ON p.layer_id = l.layer_id
+                           AND p.org_id   = @userOrgId
+                           AND p.can_view = true
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_to = '9999-12-31'::date
+                         WHERE l.valid_to = '9999-12-31'::date
+                         ORDER BY l.layer_id";
+                }
             }
             else
             {
                 // D'101 (WD'1): asOf 時点で active だった layer_style_version
-                sql = @"
-                    SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
-                           l.schema_version, l.schema_json,
-                           COALESCE(lsv.style_version, 1) AS style_version
-                      FROM layers l
-                      LEFT JOIN layer_style_version lsv
-                        ON lsv.layer_id = l.layer_id
-                       AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
-                     WHERE l.valid_from <= @asof AND @asof < l.valid_to
-                    UNION ALL
-                    SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.owner_org_id, lh.is_shared, lh.created_at,
-                           lh.schema_version, lh.schema_json,
-                           COALESCE(lsv.style_version, 1) AS style_version
-                      FROM layer_history lh
-                      LEFT JOIN layer_style_version lsv
-                        ON lsv.layer_id = lh.layer_id
-                       AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
-                     WHERE lh.valid_from <= @asof AND @asof < lh.valid_to
-                     ORDER BY layer_id";
+                // F201: 権限は **現時点** で評価 (asOf 時点の権限は遡らない)。
+                //       asOf で過去 layer 行を取得しても、それを **今** 見られるかは現在の権限。
+                if (isAdmin)
+                {
+                    sql = @"
+                        SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
+                               l.schema_version, l.schema_json,
+                               COALESCE(lsv.style_version, 1) AS style_version,
+                               true AS can_edit
+                          FROM layers l
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                         WHERE l.valid_from <= @asof AND @asof < l.valid_to
+                        UNION ALL
+                        SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.owner_org_id, lh.is_shared, lh.created_at,
+                               lh.schema_version, lh.schema_json,
+                               COALESCE(lsv.style_version, 1) AS style_version,
+                               true AS can_edit
+                          FROM layer_history lh
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = lh.layer_id
+                           AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                         WHERE lh.valid_from <= @asof AND @asof < lh.valid_to
+                         ORDER BY layer_id";
+                }
+                else
+                {
+                    sql = @"
+                        SELECT l.layer_id, l.layer_name, l.layer_type, l.owner_org_id, l.is_shared, l.created_at,
+                               l.schema_version, l.schema_json,
+                               COALESCE(lsv.style_version, 1) AS style_version,
+                               p.can_edit
+                          FROM layers l
+                          INNER JOIN org_layer_permission p
+                            ON p.layer_id = l.layer_id
+                           AND p.org_id   = @userOrgId
+                           AND p.can_view = true
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = l.layer_id
+                           AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                         WHERE l.valid_from <= @asof AND @asof < l.valid_to
+                        UNION ALL
+                        SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.owner_org_id, lh.is_shared, lh.created_at,
+                               lh.schema_version, lh.schema_json,
+                               COALESCE(lsv.style_version, 1) AS style_version,
+                               p.can_edit
+                          FROM layer_history lh
+                          INNER JOIN org_layer_permission p
+                            ON p.layer_id = lh.layer_id
+                           AND p.org_id   = @userOrgId
+                           AND p.can_view = true
+                          LEFT JOIN layer_style_version lsv
+                            ON lsv.layer_id = lh.layer_id
+                           AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                         WHERE lh.valid_from <= @asof AND @asof < lh.valid_to
+                         ORDER BY layer_id";
+                }
             }
 
             await using var cmd = db.CreateCommand(sql);
             if (asOfDate is not null) cmd.Parameters.AddWithValue("asof", asOfDate.Value);
+            if (!isAdmin) cmd.Parameters.AddWithValue("userOrgId", user.OrgId);
             await using var r = await cmd.ExecuteReaderAsync();
 
             var rows = new List<LayerDto>();
@@ -186,7 +252,8 @@ public static class LayerEndpoints
                     CreatedAt: new DateTimeOffset(createdAt, TimeSpan.Zero),
                     SchemaVersion: r.GetInt32(6),
                     Schema: schema,
-                    StyleVersion: r.GetInt32(8)
+                    StyleVersion: r.GetInt32(8),
+                    CanEdit: r.GetBoolean(9)
                 ));
             }
             return Results.Ok(rows);

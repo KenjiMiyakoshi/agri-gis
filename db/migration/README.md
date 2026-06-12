@@ -35,10 +35,15 @@ db/migration/NNN_<slug>.sql
 docker exec -i agri_postgis psql -U agri_user -d agri_gis < db/migration/NNN_xxx.sql
 
 # 連続適用（PowerShell）
-Get-ChildItem db/migration/*.sql | Sort-Object Name | ForEach-Object {
-  Write-Host "Applying $($_.Name)..."
-  Get-Content $_.FullName -Raw | docker exec -i agri_postgis psql -U agri_user -d agri_gis
-}
+# Sort-Object の既定は culture-aware で、Windows では `_` を `.` より小さく扱うため、
+# 例えば `0F03_org_layer_permission_backfill.sql` が `0F03_org_layer_permission.sql` の前に
+# 並んでしまう。ordinal (CurrentCultureIgnoreCase ではなく) 比較を強制する。
+Get-ChildItem db/migration/*.sql |
+  Sort-Object @{ Expression = { $_.Name }; Ascending = $true } -CaseSensitive |
+  ForEach-Object {
+    Write-Host "Applying $($_.Name)..."
+    Get-Content $_.FullName -Raw | docker exec -i agri_postgis psql -U agri_user -d agri_gis
+  }
 ```
 
 ## 既存 `db/init/` との関係

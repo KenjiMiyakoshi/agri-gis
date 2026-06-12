@@ -10,6 +10,12 @@
 --   p_user_id    : 操作者 UUID (audit_log.actor_user_id, NULL 不可だが暫定 NULL 許容)
 --   p_org_id_act : 操作者所属 org_id (audit_log.actor_org_id)
 -- ※ p_org_id_act は権限テーブル側の対象 org_id (p_org_id) と区別
+--
+-- Phase F WF2 hotfix: alphabetic loading order (Testcontainers fresh init) では本ファイル
+-- (`0F03_fn_*`) がテーブル定義 (`0F03_org_layer_permission.sql`) より前に走るため、
+-- CREATE FUNCTION の body 検証時にテーブルが未存在で 42P01 になる。
+-- check_function_bodies を一時的に false にして body 検証を defer する (実行時に解決)。
+SET check_function_bodies = false;
 
 CREATE OR REPLACE FUNCTION fn_org_layer_perm_upsert(
     p_org_id     INT,
