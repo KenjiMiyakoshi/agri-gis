@@ -33,6 +33,11 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         attributeEditor.SetCoordinator(this);
         // F301 (Phase F WF3): layerList (CheckedListBox) の ItemCheck で layer_visibility_change を通知
         layerList.ItemCheck += OnLayerListItemCheck;
+        // F'304 (Phase F' WF'3): layerList drag-and-drop で z-order 並べ替え
+        layerList.MouseDown += OnLayerListMouseDown;
+        layerList.MouseMove += OnLayerListMouseMove;
+        layerList.DragOver += OnLayerListDragOver;
+        layerList.DragDrop += OnLayerListDragDrop;
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
         // E402 (WE4): asOf 過去時点モード切替
@@ -99,6 +104,9 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
 
             await ReloadLayersAsync();
 
+            // F'305 (Phase F' WF'3): 永続化された layer 順序を適用
+            await ApplyPersistedLayerOrderSafelyAsync();
+
             SetStatus("Ready");
             ApplyGuestRestriction();
         }
@@ -155,8 +163,16 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         }
     }
 
+    // F'304 (Phase F' WF'3): CheckedListBox の item として LayerDto をラップ
+    private sealed class LayerListItem
+    {
+        public LayerDto Layer { get; }
+        public LayerListItem(LayerDto l) { Layer = l; }
+        public override string ToString() => $"{Layer.LayerId}: {Layer.LayerName} ({Layer.LayerType})";
+    }
+
     // F301 (Phase F WF3): CheckedListBox を再構築 + VisibleLayerIds に従って初期 check 状態を復元。
-    // ItemCheck イベントが reload 中に発火しないよう、構築中は handler を一時退避する。
+    // F'304: 表示順は OrderedLayerIds (checked 部分の z-order) + 残り (unchecked、API 順)。
     private bool _suppressItemCheck;
     private void ApplyReloadResult(ReloadResult result)
     {
@@ -164,10 +180,20 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         try
         {
             layerList.Items.Clear();
+            var checkedSet = new HashSet<int>(_controller.OrderedLayerIds);
+            // 1) Ordered (checked) layers in z-order
+            foreach (var lid in _controller.OrderedLayerIds)
+            {
+                var l = _controller.GetLayerById(lid);
+                if (l is not null) layerList.Items.Add(new LayerListItem(l), true);
+            }
+            // 2) Remaining (unchecked) layers in API order
             foreach (var l in result.Layers)
             {
-                var isVisible = _controller.VisibleLayerIds.Contains(l.LayerId);
-                layerList.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})", isVisible);
+                if (!checkedSet.Contains(l.LayerId))
+                {
+                    layerList.Items.Add(new LayerListItem(l), false);
+                }
             }
         }
         finally
@@ -180,9 +206,14 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
             return;
         }
         // F301: 初期 ON の layer を WebGIS にも送る (Controller 側で先頭 1 件が初期 ON 済)
-        foreach (var lid in _controller.VisibleLayerIds)
+        foreach (var lid in _controller.OrderedLayerIds)
         {
             _bridge?.Send("layer_visibility_change", new { layerId = lid, visible = true });
+        }
+        // F'304: 初期 z-order も WebGIS に送る
+        if (_controller.OrderedLayerIds.Count > 0)
+        {
+            _bridge?.Send("layer_order_change", new { layerIds = _controller.OrderedLayerIds.ToArray() });
         }
         SetStatus($"{result.Layers.Count} layers ({_controller.VisibleLayerIds.Count} visible)");
     }
@@ -213,16 +244,126 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
 
     // F301 (Phase F WF3): CheckedListBox の ItemCheck で layer_visibility_change を bridge 経由で WebGIS に通知。
     // CheckedListBox.ItemCheck は **状態変更前** に発火するので、NewValue から visible を取る。
+    // F'305 (Phase F' WF'3): check 変更後に SaveLayerOrderAsync で永続化
     private void OnLayerListItemCheck(object? sender, ItemCheckEventArgs e)
     {
         if (_suppressItemCheck) return;
-        var layers = _controller.Layers;
-        if (e.Index < 0 || e.Index >= layers.Count) return;
-        var layer = layers[e.Index];
+        if (e.Index < 0 || e.Index >= layerList.Items.Count) return;
+        if (layerList.Items[e.Index] is not LayerListItem item) return;
+        var layer = item.Layer;
         var visible = e.NewValue == CheckState.Checked;
         _controller.SetLayerVisible(layer.LayerId, visible);
         _bridge?.Send("layer_visibility_change", new { layerId = layer.LayerId, visible });
+        // F'305: 永続化 (best-effort、失敗は status bar のみ)
+        _ = SaveLayerOrderSafelyAsync();
         SetStatus($"Layer {layer.LayerId} {(visible ? "ON" : "OFF")} ({_controller.VisibleLayerIds.Count} visible)");
+    }
+
+    // ====== F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え ======
+    private int _dragSourceIndex = -1;
+    private Point _dragStartPoint;
+
+    private void OnLayerListMouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left) return;
+        _dragSourceIndex = layerList.IndexFromPoint(e.Location);
+        _dragStartPoint = e.Location;
+    }
+
+    private void OnLayerListMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left || _dragSourceIndex < 0) return;
+        // SystemInformation.DragSize の閾値を越えたら drag 開始 (click と区別)
+        var dx = Math.Abs(e.X - _dragStartPoint.X);
+        var dy = Math.Abs(e.Y - _dragStartPoint.Y);
+        if (dx < SystemInformation.DragSize.Width && dy < SystemInformation.DragSize.Height) return;
+        layerList.DoDragDrop(_dragSourceIndex, DragDropEffects.Move);
+        _dragSourceIndex = -1;
+    }
+
+    private void OnLayerListDragOver(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(typeof(int)) == true)
+        {
+            e.Effect = DragDropEffects.Move;
+        }
+    }
+
+    private void OnLayerListDragDrop(object? sender, DragEventArgs e)
+    {
+        var src = (int)(e.Data?.GetData(typeof(int)) ?? -1);
+        if (src < 0 || src >= layerList.Items.Count) return;
+        var point = layerList.PointToClient(new Point(e.X, e.Y));
+        var dst = layerList.IndexFromPoint(point);
+        if (dst < 0) dst = layerList.Items.Count - 1;
+        if (src == dst) return;
+
+        _suppressItemCheck = true;
+        try
+        {
+            var item = layerList.Items[src];
+            var wasChecked = layerList.GetItemChecked(src);
+            layerList.Items.RemoveAt(src);
+            layerList.Items.Insert(dst, item);
+            layerList.SetItemChecked(dst, wasChecked);
+            layerList.SelectedIndex = dst;
+        }
+        finally
+        {
+            _suppressItemCheck = false;
+        }
+
+        // 新しい z-order を controller に反映 + WebGIS / 永続化に通知
+        var newOrder = new List<int>();
+        for (int i = 0; i < layerList.Items.Count; i++)
+        {
+            if (layerList.GetItemChecked(i) &&
+                layerList.Items[i] is LayerListItem li)
+            {
+                newOrder.Add(li.Layer.LayerId);
+            }
+        }
+        try
+        {
+            _controller.ReorderLayers(newOrder);
+            _bridge?.Send("layer_order_change", new { layerIds = newOrder.ToArray() });
+            _ = SaveLayerOrderSafelyAsync();
+            SetStatus($"Reordered: {string.Join(',', newOrder)}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            SetStatus($"reorder failed: {ex.Message}");
+        }
+    }
+
+    // F'305: 永続化 (best-effort)
+    private async Task SaveLayerOrderSafelyAsync()
+    {
+        try
+        {
+            await _controller.SaveLayerOrderAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"save layer order failed: {ex.Message}");
+        }
+    }
+
+    // F'305: 起動時に永続化された order を適用 (best-effort、失敗時は API 順のまま)
+    private async Task ApplyPersistedLayerOrderSafelyAsync()
+    {
+        try
+        {
+            var persisted = await _controller.LoadLayerOrderAsync(CancellationToken.None);
+            if (persisted is null || persisted.Count == 0) return;
+            _controller.ApplyPersistedLayerOrder(persisted);
+            // CheckedListBox を再構築して新 order を反映
+            ApplyReloadResult(new ReloadResult(_controller.Layers, 0));
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"load layer order failed: {ex.Message}");
+        }
     }
 
     // D401 (WD4): bridge handler を features_selected (entityIds 配列) 受領に書き換え。

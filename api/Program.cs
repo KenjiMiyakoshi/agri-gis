@@ -173,6 +173,9 @@ app.MapGroup("/api/selection").MapSelectionEndpoints().RequireAuthorization();
 // D'301 (WD'3): SSE for layer invalidation events
 app.MapGroup("/api/events").MapEventsEndpoints().RequireAuthorization();
 
+// F'302 (Phase F' WF'3): user preference (自己リソース、全 role アクセス可)
+app.MapGroup("/api/user").MapUserPreferenceEndpoints().RequireAuthorization();
+
 app.Run();
 
 static bool IsTestEnvironment(WebApplicationBuilder b) =>

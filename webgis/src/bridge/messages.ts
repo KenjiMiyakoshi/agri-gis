@@ -6,7 +6,8 @@
 
 export type WebToHostType = 'features_selected' | 'selection_overlay_ready' | 'map_ready';
 // F402 (Phase F WF4): 'layer_visibility_change' を追加 (複数 layer 同時 ON/OFF)
-export type HostToWebType = 'layer_select' | 'layer_visibility_change' | 'features_reload' | 'feature_highlight' | 'theme_change' | 'asof_change' | 'auth_token';
+// F'304 (Phase F' WF'3): 'layer_order_change' を追加 (z-order 並べ替え)
+export type HostToWebType = 'layer_select' | 'layer_visibility_change' | 'layer_order_change' | 'features_reload' | 'feature_highlight' | 'theme_change' | 'asof_change' | 'auth_token';
 export type MessageType = WebToHostType | HostToWebType;
 
 export interface Envelope<P = unknown> {
@@ -51,6 +52,13 @@ export interface LayerVisibilityChangePayload {
   visible: boolean;
   // 既定 theme を併送 (admin が将来 layer 単位 theme 設定する想定の拡張ポイント)
   theme?: string;
+}
+
+// F'304 (Phase F' WF'3): WinForms ドラッグ並べ替えを WebGIS に通知。
+//   layerIds は上位 (前面) ほど末尾。layerStack を ol/Map.getLayers() で並べ替えるのに使う。
+//   selectionLayer は常に最上位を維持。
+export interface LayerOrderChangePayload {
+  layerIds: number[];
 }
 
 export interface FeaturesReloadPayload {

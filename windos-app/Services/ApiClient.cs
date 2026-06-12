@@ -253,6 +253,26 @@ public sealed class ApiClient : IApiClient
         return list ?? new List<OrgLayerPermissionDto>();
     }
 
+    // ----- F'306 (Phase F' WF'3): user_preference -----
+
+    public async Task<UserPreferenceDto?> GetUserPreferenceAsync(string key, CancellationToken ct)
+    {
+        using var res = await _http.GetAsync($"/api/user/preferences/{Uri.EscapeDataString(key)}", ct);
+        if (res.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(res, ct);
+        return await res.Content.ReadFromJsonAsync<UserPreferenceDto>(JsonOpts, ct);
+    }
+
+    public async Task<UserPreferenceDto> PutUserPreferenceAsync(string key, UserPreferencePutDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var msg = new HttpRequestMessage(HttpMethod.Put,
+            $"/api/user/preferences/{Uri.EscapeDataString(key)}") { Content = content };
+        using var res = await _http.SendAsync(msg, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<UserPreferenceDto>(JsonOpts, ct))!;
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage res, CancellationToken ct)
     {
         if (res.IsSuccessStatusCode) return;

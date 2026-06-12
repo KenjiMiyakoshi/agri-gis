@@ -64,10 +64,12 @@ partial class MainForm
         layerLabel.AutoSize = false;
 
         // F301 (Phase F WF3): layerList — 複数 ON/OFF 用 CheckedListBox
+        // F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え可能に
         layerList.Dock = DockStyle.Top;
         layerList.Height = 180;
         layerList.CheckOnClick = true;       // 1 クリックでチェック切替 (2 クリック不要)
         layerList.IntegralHeight = false;
+        layerList.AllowDrop = true;          // F'304: drag-and-drop 受領
 
         // attributeEditor
         attributeEditor.Dock = DockStyle.Fill;
