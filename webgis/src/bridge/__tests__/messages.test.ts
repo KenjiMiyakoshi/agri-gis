@@ -3,6 +3,7 @@ import type {
   Envelope,
   FeaturesSelectedPayload,
   LayerSelectPayload,
+  LayerVisibilityChangePayload,
   ThemeChangePayload,
   SelectionOverlayReadyPayload
 } from '../messages';
@@ -71,5 +72,32 @@ describe('Envelope JSON round-trip', () => {
     const back = JSON.parse(wire) as Envelope<LayerSelectPayload>;
     expect(back.payload.asOf).toBe('2026-05-29');
     expect(back.payload.theme).toBe('default');
+  });
+
+  // F402 (Phase F WF4): layer_visibility_change envelope
+  it('serializes layer_visibility_change visible=true with theme (F402)', () => {
+    const original: Envelope<LayerVisibilityChangePayload> = {
+      type: 'layer_visibility_change',
+      payload: { layerId: 5, visible: true, theme: 'default' }
+    };
+    const wire = JSON.stringify(original);
+    expect(wire).toContain('"type":"layer_visibility_change"');
+    expect(wire).toContain('"visible":true');
+    const back = JSON.parse(wire) as Envelope<LayerVisibilityChangePayload>;
+    expect(back.payload.layerId).toBe(5);
+    expect(back.payload.visible).toBe(true);
+    expect(back.payload.theme).toBe('default');
+  });
+
+  it('serializes layer_visibility_change visible=false without theme (F402)', () => {
+    const original: Envelope<LayerVisibilityChangePayload> = {
+      type: 'layer_visibility_change',
+      payload: { layerId: 7, visible: false }
+    };
+    const wire = JSON.stringify(original);
+    const back = JSON.parse(wire) as Envelope<LayerVisibilityChangePayload>;
+    expect(back.payload.layerId).toBe(7);
+    expect(back.payload.visible).toBe(false);
+    expect(back.payload.theme).toBeUndefined();
   });
 });

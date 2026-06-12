@@ -5,7 +5,8 @@
 // `features_selected` + `theme_change` + `selection_overlay_ready` に切替。
 
 export type WebToHostType = 'features_selected' | 'selection_overlay_ready' | 'map_ready';
-export type HostToWebType = 'layer_select' | 'features_reload' | 'feature_highlight' | 'theme_change' | 'asof_change' | 'auth_token';
+// F402 (Phase F WF4): 'layer_visibility_change' を追加 (複数 layer 同時 ON/OFF)
+export type HostToWebType = 'layer_select' | 'layer_visibility_change' | 'features_reload' | 'feature_highlight' | 'theme_change' | 'asof_change' | 'auth_token';
 export type MessageType = WebToHostType | HostToWebType;
 
 export interface Envelope<P = unknown> {
@@ -40,6 +41,16 @@ export interface LayerSelectPayload {
   // D303 (WD3): theme を併送、未指定で 'default'
   theme?: string;
   asOf?: string;
+}
+
+// F402 (Phase F WF4): 複数 layer 同時 ON/OFF 用 envelope。
+//   visible=true で addLayer (新規 or 既存表示)、false で removeLayer。
+//   1 イベント = 1 layer の状態変更 (バルク化は F' 申し送り)。
+export interface LayerVisibilityChangePayload {
+  layerId: number;
+  visible: boolean;
+  // 既定 theme を併送 (admin が将来 layer 単位 theme 設定する想定の拡張ポイント)
+  theme?: string;
 }
 
 export interface FeaturesReloadPayload {
