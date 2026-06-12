@@ -238,12 +238,20 @@ dotnet run
 
 詳細は [docs/PHASE_F_INDEX.md](docs/PHASE_F_INDEX.md) / [docs/PHASE_F_COMPLETE.md](docs/PHASE_F_COMPLETE.md) / [docs/org-layer-permission.md](docs/org-layer-permission.md) / [docs/multi-layer-display.md](docs/multi-layer-display.md) / [docs/manual-verification-phase-f.md](docs/manual-verification-phase-f.md)。
 
+## Phase F': SSE 統合 + 即時 tile 反映 + z-order
+
+- **SSE 統合**: 複数 layer 表示中も EventSource は 1 本のみ (`/api/events/stream-all?layerIds=1,2,3`)。Chrome 6 connection/origin 制限を回避。旧 `/api/events/layers/{id}/stream` は deprecated (Sunset 2026-12-31)
+- **権限変更の即時反映**: admin が組織×レイヤ権限を更新すると、対象組織の WebGIS は SSE 経由で即時 tile を invalidate。再ログインや TTL 待ちは不要
+- **z-order drag**: 右パネルの CheckedListBox 内をマウスドラッグで並べ替え。上位ほど前面 (z-order 高)。`user_preference` テーブルに保存され、再起動後も復元
+
+詳細は [docs/PHASE_F_PRIME_INDEX.md](docs/PHASE_F_PRIME_INDEX.md) / [docs/PHASE_F_PRIME_COMPLETE.md](docs/PHASE_F_PRIME_COMPLETE.md) / [docs/sse-multiplex.md](docs/sse-multiplex.md) / [docs/tile-invalidation-on-perm.md](docs/tile-invalidation-on-perm.md) / [docs/manual-verification-phase-f-prime.md](docs/manual-verification-phase-f-prime.md)。
+
 ## 既知の制約
 
 - **refresh token なし**：Phase A は access 8h のみ。期限切れで再ログイン (`UnauthorizedApiException` → `LoginForm` の自動表示で UX 緩和)
 - **WebGIS は WinForms 経由の token push**：bridge `auth_token` envelope で JWT を引き渡す最小実装。WebGIS 単体の login UI / refresh token は未対応 (Phase B)
 - **テナント分離なし (feature 粒度)**: Phase F で layer 粒度の組織×レイヤ権限は実装済だが、feature_current の行レベル RLS は Phase G 送り。異組織の feature が地理的に重なる場合 tile に映りうる
-- **権限変更の即時反映なし**: tile cache TTL 24h で再ログインまで古い権限の tile が見える可能性。SSE での即時 invalidate は Phase F' 申し送り
+- **SSE broker は in-memory**: 本番 1000+ user での運用は Phase F''/H で Redis 化検討
 - **図形編集 UI なし**：API は `PATCH /api/features/{id}` で `geometry` を受け取れるが、WebGIS の Draw/Modify UI は未実装
 - **マイグレーションは手動適用**：Flyway 等のツールは未導入。`docker compose down -v` で再構築するのが現状の運用。PowerShell ループは culture sensitivity 回避のため `Sort-Object -CaseSensitive` 必須 ([db/migration/README.md](db/migration/README.md))
 - **WebView2 専用**：WebGIS は WebView2 ホスト下で動かす前提。ブラウザ単独起動も dev では動くが、bridge 通信は機能しない
