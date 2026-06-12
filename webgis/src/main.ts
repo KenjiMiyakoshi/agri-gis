@@ -12,7 +12,9 @@ import type {
 } from './bridge/messages';
 import { changeAsOf } from './controllers/layer';
 import { setAccessToken, fetchLayers } from './api/client';
-import { startEventStream, stopEventStreamFor } from './controllers/eventStream';
+// F'203 (Phase F' WF'2): per-layer subscribe を単一 subscribeLayers に統合
+import { subscribeLayers } from './controllers/eventStream';
+import { getVisibleLayerIds } from './controllers/layer';
 
 const ctx = createMap('map');
 wireRotation(ctx);
@@ -45,6 +47,7 @@ onMessage((msg) => {
 });
 
 // F402 (Phase F WF4): visible=true で addLayer + SSE 購読開始、false で removeLayer + 解除
+// F'203 (Phase F' WF'2): per-layer subscribe を廃止、現在の layerStack 全体で subscribeLayers を呼ぶ
 async function handleLayerVisibilityChange(p: LayerVisibilityChangePayload): Promise<void> {
   if (p.visible) {
     let sv: number | null = null;
@@ -55,13 +58,11 @@ async function handleLayerVisibilityChange(p: LayerVisibilityChangePayload): Pro
       console.warn('[layer_visibility_change] fetchLayers failed', e);
     }
     addLayer(ctx, p.layerId, p.theme ?? 'default', ctx.currentAsOf, sv);
-    // F404: 該当 layer の SSE 購読を開始 (per-layer EventSource)
-    startEventStream(ctx, p.layerId);
   } else {
-    // F404: 解除を先に (delete 後の参照を防ぐ)
-    stopEventStreamFor(p.layerId);
     removeLayer(ctx, p.layerId);
   }
+  // F'203: 表示中 layer 集合が変わったので SSE 購読集合を更新
+  subscribeLayers(ctx, getVisibleLayerIds(ctx));
 }
 
 // 起動完了を Host に通知
