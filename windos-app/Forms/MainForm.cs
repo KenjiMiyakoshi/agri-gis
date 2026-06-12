@@ -38,6 +38,8 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         layerList.MouseMove += OnLayerListMouseMove;
         layerList.DragOver += OnLayerListDragOver;
         layerList.DragDrop += OnLayerListDragDrop;
+        // F'304 hotfix: ドラッグ中の視覚フィードバック (ghost form + cursor 変更)
+        layerList.GiveFeedback += OnLayerListGiveFeedback;
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
         // E402 (WE4): asOf 過去時点モード切替
@@ -262,6 +264,44 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     // ====== F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え ======
     private int _dragSourceIndex = -1;
     private Point _dragStartPoint;
+    // F'304 hotfix: ドラッグ中のゴースト (マウス追従表示)
+    private DragGhostForm? _dragGhost;
+
+    // 半透明ゴースト Form (borderless / TopMost / non-activating)
+    private sealed class DragGhostForm : Form
+    {
+        public Label TextLabel { get; }
+        public DragGhostForm()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            TopMost = true;
+            StartPosition = FormStartPosition.Manual;
+            Opacity = 0.85;
+            BackColor = Color.LightYellow;
+            TextLabel = new Label
+            {
+                AutoSize = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                Padding = new Padding(8, 4, 8, 4),
+                BackColor = Color.LightYellow,
+                ForeColor = Color.Black
+            };
+            Controls.Add(TextLabel);
+        }
+        protected override bool ShowWithoutActivation => true;
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                const int WS_EX_TOOLWINDOW = 0x80;
+                const int WS_EX_NOACTIVATE = 0x08000000;
+                var cp = base.CreateParams;
+                cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+                return cp;
+            }
+        }
+    }
 
     private void OnLayerListMouseDown(object? sender, MouseEventArgs e)
     {
@@ -277,15 +317,52 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         var dx = Math.Abs(e.X - _dragStartPoint.X);
         var dy = Math.Abs(e.Y - _dragStartPoint.Y);
         if (dx < SystemInformation.DragSize.Width && dy < SystemInformation.DragSize.Height) return;
-        layerList.DoDragDrop(_dragSourceIndex, DragDropEffects.Move);
-        _dragSourceIndex = -1;
+
+        // F'304 hotfix: ゴースト Form を表示してドラッグ中のレイヤ名をマウスに追従させる
+        if (_dragSourceIndex < layerList.Items.Count &&
+            layerList.Items[_dragSourceIndex] is LayerListItem li)
+        {
+            _dragGhost ??= new DragGhostForm();
+            _dragGhost.TextLabel.Text = $"↕  {li.Layer.LayerName}";
+            _dragGhost.Size = new Size(
+                _dragGhost.TextLabel.PreferredWidth + 4,
+                _dragGhost.TextLabel.PreferredHeight + 4);
+            _dragGhost.Location = new Point(Cursor.Position.X + 14, Cursor.Position.Y + 14);
+            _dragGhost.Show();
+        }
+        try
+        {
+            layerList.DoDragDrop(_dragSourceIndex, DragDropEffects.Move);
+        }
+        finally
+        {
+            _dragGhost?.Hide();
+            _dragSourceIndex = -1;
+        }
     }
 
     private void OnLayerListDragOver(object? sender, DragEventArgs e)
     {
-        if (e.Data?.GetDataPresent(typeof(int)) == true)
+        if (e.Data?.GetDataPresent(typeof(int)) != true) return;
+        e.Effect = DragDropEffects.Move;
+        // F'304 hotfix: カーソル下の項目を選択ハイライトして drop 位置を視覚化
+        var point = layerList.PointToClient(new Point(e.X, e.Y));
+        var idx = layerList.IndexFromPoint(point);
+        if (idx >= 0 && idx < layerList.Items.Count && layerList.SelectedIndex != idx)
         {
-            e.Effect = DragDropEffects.Move;
+            layerList.SelectedIndex = idx;
+        }
+    }
+
+    // F'304 hotfix: ドラッグ中のカーソル変更 + ゴースト Form をマウスに追従
+    // GiveFeedback は DoDragDrop の modal loop 内で連続発火する
+    private void OnLayerListGiveFeedback(object? sender, GiveFeedbackEventArgs e)
+    {
+        e.UseDefaultCursors = false;
+        Cursor.Current = Cursors.Hand;
+        if (_dragGhost is { Visible: true })
+        {
+            _dragGhost.Location = new Point(Cursor.Position.X + 14, Cursor.Position.Y + 14);
         }
     }
 
