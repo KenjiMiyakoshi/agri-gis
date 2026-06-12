@@ -31,17 +31,20 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         InitializeComponent();
         // WB4 B405 (H4 解消): AttributeEditorControl に IFeatureSaveCoordinator を注入
         attributeEditor.SetCoordinator(this);
-        layerCombo.SelectedIndexChanged += OnLayerComboChanged;
+        // F301 (Phase F WF3): layerList (CheckedListBox) の ItemCheck で layer_visibility_change を通知
+        layerList.ItemCheck += OnLayerListItemCheck;
         attributeEditor.Saved += OnAttributeEditorSaved;
         attributeEditor.FeatureLoaded += (_, _) => ApplyGuestRestriction();
         // E402 (WE4): asOf 過去時点モード切替
         asOfEnabled.CheckedChanged += OnAsOfEnabledChanged;
         asOfPicker.ValueChanged += OnAsOfPickerChanged;
         // WB4 B406: レイヤ管理メニュー
+        // F305 (Phase F WF3): admin の場合だけ「権限管理...」ボタンを表示
         layerAdminMenuItem.Click += async (_, _) =>
         {
             using (var f = _sp.GetRequiredService<LayerAdminForm>())
             {
+                f.SetAdminVisibility(_session.Current?.IsAdmin ?? false);
                 f.ShowDialog(this);
             }
             // 追加/削除が走った可能性があるので戻ってきたら一覧を再読込
@@ -114,26 +117,32 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         }
     }
 
+    // F302 (Phase F WF3): read-only 判定を 3 条件 OR に拡張
+    //   - guest user
+    //   - asOf 過去時点モード
+    //   - 現在ロード中の feature の layer が canEdit=false
     private void ApplyGuestRestriction()
     {
         var isGuest = _session.Current?.IsGuest ?? false;
-        attributeEditor.SetReadOnly(isGuest);
+        var inPastMode = asOfEnabled.Checked;
+        var currentLayerCantEdit = !_canEditCurrent;
+        attributeEditor.SetReadOnly(isGuest || inPastMode || currentLayerCantEdit);
     }
 
+    // F302: 現在 AttributeEditor に表示中の feature の layer の canEdit 状態 (true = 編集可)
+    // HandleFeaturesSelectedAsync で feature ロード時に Controller.GetLayerById で更新する。
+    private bool _canEditCurrent = true;
+
     // WB5 fix: LayerAdminForm からのインポート/削除後に呼ぶ、または起動時の初期読込で呼ぶ。
-    // 現在選択中の layer_id を保持して再選択を試みる。
-    // H5-101 (WH5-1): Controller 経由で layer 取得 + ComboBox 更新は MainForm に残す。
+    // F301 (Phase F WF3): layerList ベース。VisibleLayerIds は Controller が保持。
     private async Task ReloadLayersAsync()
     {
         try
         {
             SetStatus("Loading layers...");
-            var layers = _controller.Layers;
-            var prevLayerId = layerCombo.SelectedIndex >= 0 && layerCombo.SelectedIndex < layers.Count
-                ? (int?)layers[layerCombo.SelectedIndex].LayerId
-                : null;
-
-            var result = await _controller.ReloadAsync(prevLayerId, CancellationToken.None);
+            // F301: prevSelectedLayerId は廃止 (複数選択時代に「直前の単一選択」概念がなくなる)。
+            //       VisibleLayerIds は Controller 内に永続化されるので、ReloadAsync(null) で OK。
+            var result = await _controller.ReloadAsync(prevSelectedLayerId: null, CancellationToken.None);
             ApplyReloadResult(result);
         }
         catch (UnauthorizedApiException)
@@ -146,20 +155,36 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         }
     }
 
+    // F301 (Phase F WF3): CheckedListBox を再構築 + VisibleLayerIds に従って初期 check 状態を復元。
+    // ItemCheck イベントが reload 中に発火しないよう、構築中は handler を一時退避する。
+    private bool _suppressItemCheck;
     private void ApplyReloadResult(ReloadResult result)
     {
-        layerCombo.Items.Clear();
-        foreach (var l in result.Layers)
+        _suppressItemCheck = true;
+        try
         {
-            layerCombo.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})");
+            layerList.Items.Clear();
+            foreach (var l in result.Layers)
+            {
+                var isVisible = _controller.VisibleLayerIds.Contains(l.LayerId);
+                layerList.Items.Add($"{l.LayerId}: {l.LayerName} ({l.LayerType})", isVisible);
+            }
+        }
+        finally
+        {
+            _suppressItemCheck = false;
         }
         if (result.Layers.Count == 0)
         {
             SetStatus("No layers");
             return;
         }
-        layerCombo.SelectedIndex = result.RestoreIndex;
-        SetStatus($"{result.Layers.Count} layers");
+        // F301: 初期 ON の layer を WebGIS にも送る (Controller 側で先頭 1 件が初期 ON 済)
+        foreach (var lid in _controller.VisibleLayerIds)
+        {
+            _bridge?.Send("layer_visibility_change", new { layerId = lid, visible = true });
+        }
+        SetStatus($"{result.Layers.Count} layers ({_controller.VisibleLayerIds.Count} visible)");
     }
 
     // H5-102 (WH5-1): Unauthorized 復旧経路を Controller 経由に統合 (旧版の reload 二重実装を解消)
@@ -186,16 +211,18 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         SetStatus("Re-authenticated");
     }
 
-    private void OnLayerComboChanged(object? sender, EventArgs e)
+    // F301 (Phase F WF3): CheckedListBox の ItemCheck で layer_visibility_change を bridge 経由で WebGIS に通知。
+    // CheckedListBox.ItemCheck は **状態変更前** に発火するので、NewValue から visible を取る。
+    private void OnLayerListItemCheck(object? sender, ItemCheckEventArgs e)
     {
+        if (_suppressItemCheck) return;
         var layers = _controller.Layers;
-        if (_bridge is null || layerCombo.SelectedIndex < 0 || layerCombo.SelectedIndex >= layers.Count)
-        {
-            return;
-        }
-        var layer = layers[layerCombo.SelectedIndex];
-        _bridge.Send("layer_select", new { layerId = layer.LayerId });
-        SetStatus($"Layer {layer.LayerId} selected");
+        if (e.Index < 0 || e.Index >= layers.Count) return;
+        var layer = layers[e.Index];
+        var visible = e.NewValue == CheckState.Checked;
+        _controller.SetLayerVisible(layer.LayerId, visible);
+        _bridge?.Send("layer_visibility_change", new { layerId = layer.LayerId, visible });
+        SetStatus($"Layer {layer.LayerId} {(visible ? "ON" : "OFF")} ({_controller.VisibleLayerIds.Count} visible)");
     }
 
     // D401 (WD4): bridge handler を features_selected (entityIds 配列) 受領に書き換え。
@@ -256,6 +283,9 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
                 schemaRes.Schema.Fields
                     .Select(f => new SchemaField(f.Key, f.Type, f.Required, f.Label))
                     .ToArray());
+            // F302: 該当 layer の canEdit を引いて AttributeEditor の read-only 制御に反映
+            // GetLayerById が null (まだロード前等) は安全側で canEdit=false 扱い
+            _canEditCurrent = _controller.GetLayerById(layerId)?.CanEdit ?? false;
             if (InvokeRequired)
             {
                 Invoke(new Action(() => attributeEditor.LoadFeature(coreSchema, feature)));

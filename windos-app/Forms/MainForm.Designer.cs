@@ -10,7 +10,9 @@ partial class MainForm
     private WebView2 webView = null!;
     private Panel rightPanel = null!;
     private Label layerLabel = null!;
-    private ComboBox layerCombo = null!;
+    // F301 (Phase F WF3): 複数 layer を同時 ON/OFF できる CheckedListBox に変更
+    // 旧 layerCombo (ComboBox) は WD4 まで「単一選択」だったが、F 以降は複数表示が前提
+    internal CheckedListBox layerList = null!;
     private AttributeEditorControl attributeEditor = null!;
     private StatusStrip statusStrip = null!;
     private ToolStripStatusLabel statusLabel = null!;
@@ -35,7 +37,7 @@ partial class MainForm
         webView = new WebView2();
         rightPanel = new Panel();
         layerLabel = new Label();
-        layerCombo = new ComboBox();
+        layerList = new CheckedListBox();
         attributeEditor = new AttributeEditorControl();
         statusStrip = new StatusStrip();
         statusLabel = new ToolStripStatusLabel();
@@ -57,13 +59,15 @@ partial class MainForm
 
         // layerLabel
         layerLabel.Dock = DockStyle.Top;
-        layerLabel.Text = "Layer:";
+        layerLabel.Text = "表示レイヤ:";
         layerLabel.Height = 20;
         layerLabel.AutoSize = false;
 
-        // layerCombo
-        layerCombo.Dock = DockStyle.Top;
-        layerCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        // F301 (Phase F WF3): layerList — 複数 ON/OFF 用 CheckedListBox
+        layerList.Dock = DockStyle.Top;
+        layerList.Height = 180;
+        layerList.CheckOnClick = true;       // 1 クリックでチェック切替 (2 クリック不要)
+        layerList.IntegralHeight = false;
 
         // attributeEditor
         attributeEditor.Dock = DockStyle.Fill;
@@ -88,9 +92,9 @@ partial class MainForm
         rightPanel.Dock = DockStyle.Right;
         rightPanel.Width = 360;
         rightPanel.Padding = new Padding(8);
-        // 追加順は「後追加が先ドック」: attributeEditor(Fill) を先に、その上に combo, さらに上に label, asOfPanel
+        // 追加順は「後追加が先ドック」: attributeEditor(Fill) を先に、その上に layerList, さらに上に label, asOfPanel
         rightPanel.Controls.Add(attributeEditor);
-        rightPanel.Controls.Add(layerCombo);
+        rightPanel.Controls.Add(layerList);
         rightPanel.Controls.Add(layerLabel);
         rightPanel.Controls.Add(asOfPanel);
 

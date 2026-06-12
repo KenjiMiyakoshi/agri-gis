@@ -58,4 +58,10 @@ public interface IApiClient
     // E'201 (WE'2) / D'104 reuse: POST /api/features/batch
     Task<FeatureBatchUpdateResponseDto> BatchUpdateFeaturesAsync(
         FeatureBatchUpdateRequestDto req, CancellationToken ct);
+
+    // F306 (Phase F WF3): 組織一覧 + 組織×レイヤ権限管理
+    Task<IReadOnlyList<OrgDto>> ListOrgsAsync(CancellationToken ct);
+    Task<IReadOnlyList<OrgLayerPermissionDto>> GetOrgLayerPermissionsAsync(int orgId, CancellationToken ct);
+    Task<IReadOnlyList<OrgLayerPermissionDto>> UpdateOrgLayerPermissionsAsync(
+        int orgId, OrgLayerPermsUpsertDto req, CancellationToken ct);
 }

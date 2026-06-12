@@ -17,6 +17,8 @@ public sealed class MainFormController
     private readonly ISessionStore _session;
     private readonly AsOfState _asOf;
     private IReadOnlyList<LayerDto> _layers = Array.Empty<LayerDto>();
+    // F302 (Phase F WF3): 複数 layer 同時表示の ON/OFF 状態。LayerId の集合。
+    private readonly HashSet<int> _visibleLayerIds = new();
 
     public MainFormController(IApiClient api, ISessionStore session, AsOfState asOf)
     {
@@ -31,12 +33,42 @@ public sealed class MainFormController
     /// <summary>現在の session (read only)。</summary>
     public Session? CurrentSession => _session.Current;
 
+    /// <summary>F302: 現在 ON になっている layer_id 集合 (read only snapshot)。</summary>
+    public IReadOnlySet<int> VisibleLayerIds => _visibleLayerIds;
+
+    /// <summary>F302: layer 表示状態の切替 (CheckedListBox の ItemCheck から呼ぶ)。</summary>
+    public void SetLayerVisible(int layerId, bool visible)
+    {
+        if (visible) _visibleLayerIds.Add(layerId);
+        else _visibleLayerIds.Remove(layerId);
+    }
+
+    /// <summary>F302: layer_id から layer 情報を取得 (見つからなければ null)。</summary>
+    /// <remarks>AttributeEditor の canEdit 判定で使用。</remarks>
+    public LayerDto? GetLayerById(int layerId)
+    {
+        for (int i = 0; i < _layers.Count; i++)
+        {
+            if (_layers[i].LayerId == layerId) return _layers[i];
+        }
+        return null;
+    }
+
     /// <summary>
     /// API から layer 一覧を再取得し、以前の選択 layer_id を維持できる restore index を返す。
+    /// F302: VisibleLayerIds は再 reload しても保持 (既に削除された layer は集合から落とす)。
+    /// 初回 (まだ集合が空) の場合は、先頭 1 件を初期 ON にする。
     /// </summary>
     public async Task<ReloadResult> ReloadAsync(int? prevSelectedLayerId, CancellationToken ct)
     {
         _layers = await _api.GetLayersAsync(_asOf.Current, ct);
+        // F302: 既存 _visibleLayerIds のうち、現在 _layers に存在しないものを削除
+        _visibleLayerIds.RemoveWhere(id => !_layers.Any(l => l.LayerId == id));
+        // 初回ロード時 (集合が空 + 層がある) は先頭を ON
+        if (_visibleLayerIds.Count == 0 && _layers.Count > 0)
+        {
+            _visibleLayerIds.Add(_layers[0].LayerId);
+        }
         var restoreIndex = ComputeRestoreIndex(_layers, prevSelectedLayerId);
         return new ReloadResult(_layers, restoreIndex);
     }

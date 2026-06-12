@@ -21,8 +21,10 @@ public sealed class FakeApiClient : IApiClient
 
     public Task<LoginResponseDto> LoginAsync(string loginId, string password, CancellationToken ct)
         => throw new NotImplementedException();
+    // F307 (Phase F WF3): テストから差し替え可能にするため Impl デリゲートを採用
+    public Func<DateOnly?, IReadOnlyList<LayerDto>>? GetLayersImpl;
     public Task<IReadOnlyList<LayerDto>> GetLayersAsync(DateOnly? asOf, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<LayerDto>>(Array.Empty<LayerDto>());
+        => Task.FromResult(GetLayersImpl?.Invoke(asOf) ?? (IReadOnlyList<LayerDto>)Array.Empty<LayerDto>());
     public Task<LayerSchemaResponseDto> GetLayerSchemaAsync(int layerId, DateOnly? asOf, CancellationToken ct)
         => throw new NotImplementedException();
     public Task<FeatureDto> GetFeatureAsync(Guid entityId, DateOnly? asOf, CancellationToken ct)
@@ -113,4 +115,45 @@ public sealed class FakeApiClient : IApiClient
             Results: req.EntityIds.Select((id, i) => new FeatureBatchUpdateResultDto(
                 id, req.IfMatchVersions[i] + 1, DateOnly.FromDateTime(DateTime.UtcNow))).ToList(),
             Count: req.EntityIds.Count));
+
+    // F306 (Phase F WF3): 組織×レイヤ権限管理 stub
+    public List<OrgDto> Orgs = new();
+    public Dictionary<int, List<OrgLayerPermissionDto>> PermsByOrg = new();
+    public int GetOrgPermsCalls;
+    public int UpdateOrgPermsCalls;
+    public OrgLayerPermsUpsertDto? LastUpdateReq;
+
+    public Task<IReadOnlyList<OrgDto>> ListOrgsAsync(CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<OrgDto>>(Orgs);
+
+    public Task<IReadOnlyList<OrgLayerPermissionDto>> GetOrgLayerPermissionsAsync(int orgId, CancellationToken ct)
+    {
+        GetOrgPermsCalls++;
+        return Task.FromResult<IReadOnlyList<OrgLayerPermissionDto>>(
+            PermsByOrg.TryGetValue(orgId, out var p) ? p : new List<OrgLayerPermissionDto>());
+    }
+
+    public Task<IReadOnlyList<OrgLayerPermissionDto>> UpdateOrgLayerPermissionsAsync(
+        int orgId, OrgLayerPermsUpsertDto req, CancellationToken ct)
+    {
+        UpdateOrgPermsCalls++;
+        LastUpdateReq = req;
+        // 既存の権限を upsert で反映
+        if (!PermsByOrg.TryGetValue(orgId, out var current)) current = new();
+        foreach (var it in req.Permissions)
+        {
+            var idx = current.FindIndex(p => p.LayerId == it.LayerId);
+            if (idx < 0)
+            {
+                current.Add(new OrgLayerPermissionDto(orgId, it.LayerId, $"L{it.LayerId}", "polygon",
+                    it.CanView, it.CanEdit));
+            }
+            else
+            {
+                current[idx] = current[idx] with { CanView = it.CanView, CanEdit = it.CanEdit };
+            }
+        }
+        PermsByOrg[orgId] = current;
+        return Task.FromResult<IReadOnlyList<OrgLayerPermissionDto>>(current);
+    }
 }

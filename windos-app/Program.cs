@@ -90,6 +90,8 @@ internal static class Program
         services.AddTransient<LoginForm>();
         // WB4 B406/B408
         services.AddTransient<LayerAdminForm>();
+        // F304/F305 (Phase F WF3): 組織×レイヤ 権限管理ダイアログ
+        services.AddTransient<OrgPermissionsForm>();
         services.AddTransient<ImportWizardForm>();
 
         using var sp = services.BuildServiceProvider();

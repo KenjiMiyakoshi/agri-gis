@@ -223,6 +223,36 @@ public sealed class ApiClient : IApiClient
         return (await res.Content.ReadFromJsonAsync<LayerStyleDto>(JsonOpts, ct))!;
     }
 
+    // ----- F306 (Phase F WF3): 組織×レイヤ権限管理 -----
+
+    public async Task<IReadOnlyList<OrgDto>> ListOrgsAsync(CancellationToken ct)
+    {
+        using var res = await _http.GetAsync("/api/admin/organizations", ct);
+        await EnsureSuccessAsync(res, ct);
+        var list = await res.Content.ReadFromJsonAsync<List<OrgDto>>(JsonOpts, ct);
+        return list ?? new List<OrgDto>();
+    }
+
+    public async Task<IReadOnlyList<OrgLayerPermissionDto>> GetOrgLayerPermissionsAsync(int orgId, CancellationToken ct)
+    {
+        using var res = await _http.GetAsync($"/api/admin/organizations/{orgId}/layer-permissions", ct);
+        await EnsureSuccessAsync(res, ct);
+        var list = await res.Content.ReadFromJsonAsync<List<OrgLayerPermissionDto>>(JsonOpts, ct);
+        return list ?? new List<OrgLayerPermissionDto>();
+    }
+
+    public async Task<IReadOnlyList<OrgLayerPermissionDto>> UpdateOrgLayerPermissionsAsync(
+        int orgId, OrgLayerPermsUpsertDto req, CancellationToken ct)
+    {
+        using var content = JsonContent.Create(req, options: JsonOpts);
+        using var msg = new HttpRequestMessage(HttpMethod.Put,
+            $"/api/admin/organizations/{orgId}/layer-permissions") { Content = content };
+        using var res = await _http.SendAsync(msg, ct);
+        await EnsureSuccessAsync(res, ct);
+        var list = await res.Content.ReadFromJsonAsync<List<OrgLayerPermissionDto>>(JsonOpts, ct);
+        return list ?? new List<OrgLayerPermissionDto>();
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage res, CancellationToken ct)
     {
         if (res.IsSuccessStatusCode) return;
