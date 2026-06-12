@@ -318,20 +318,26 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
 
     // F'304 hotfix: drag が起こらなかった場合のみ check を toggle する。
     //   これで「drag するつもりで掴んだら toggle されちゃう」問題を防ぐ。
+    // F'304 hotfix-2: SetItemChecked を MouseUp 内から直接呼ぶと native CheckedListBox の
+    //   WM_LBUTTONUP 処理と再入が起き、ItemCheck イベントは発火する (= bridge.Send は走る) のに
+    //   listbox 視覚が追従しない。BeginInvoke で WM_LBUTTONUP 完了後にディスパッチする。
+    //   ついでに IndexFromPoint との比較は外し、MouseDown 時の index を信頼する。
     private void OnLayerListMouseUp(object? sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left) return;
-        if (!_dragStarted && _dragSourceIndex >= 0 && _dragSourceIndex < layerList.Items.Count)
-        {
-            // drag せずに click した → 同じ index 上で離されたら toggle
-            var clickIdx = layerList.IndexFromPoint(e.Location);
-            if (clickIdx == _dragSourceIndex)
-            {
-                layerList.SetItemChecked(_dragSourceIndex, !layerList.GetItemChecked(_dragSourceIndex));
-            }
-        }
+        var src = _dragSourceIndex;
+        var dragged = _dragStarted;
         _dragSourceIndex = -1;
         _dragStarted = false;
+        if (dragged) return;  // drag は DragDrop 側で処理済み
+        if (src < 0 || src >= layerList.Items.Count) return;
+        BeginInvoke(new Action(() =>
+        {
+            if (src >= 0 && src < layerList.Items.Count)
+            {
+                layerList.SetItemChecked(src, !layerList.GetItemChecked(src));
+            }
+        }));
     }
 
     private void OnLayerListMouseMove(object? sender, MouseEventArgs e)
@@ -412,11 +418,12 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     private void OnLayerListDragDrop(object? sender, DragEventArgs e)
     {
         var src = (int)(e.Data?.GetData(typeof(int)) ?? -1);
+        // F'304 hotfix-2: ClearDropIndicator() より先に drop target を読む。
+        //   ClearDropIndicator() は _dropIndicatorIndex = -1 にリセットするため、
+        //   その後に GetDropTargetIndex() を呼ぶと常に -1 が返り、並べ替えが一切走らなくなる。
+        var insertAt = layerList.GetDropTargetIndex();
         layerList.ClearDropIndicator();
         if (src < 0 || src >= layerList.Items.Count) return;
-
-        // F'304 hotfix: drop target は indicator の位置から計算 (Items.Count = 末尾)
-        var insertAt = layerList.GetDropTargetIndex();
         if (insertAt < 0)
         {
             // indicator が無い (DragLeave 経由など) → 何もしない
