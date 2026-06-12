@@ -129,6 +129,42 @@ export function getVisibleLayerIds(ctx: MapContext): number[] {
 }
 
 /**
+ * F'304 (Phase F' WF'3): layerStack を指定された順序で並べ替える。
+ *   - orderedIds は上位 (前面) ほど末尾。OL の layers 配列は最後が最前面なのでそのまま順序を保つ。
+ *   - selectionLayer は常に最上位を維持 (orderedIds の更に上に置く)。
+ *   - orderedIds に含まれない layerStack の layer は順序末尾 (selectionLayer 直前) に残置。
+ *   - 不明な layerId (layerStack に無い) は無視。
+ */
+export function reorderLayers(ctx: MapContext, orderedIds: number[]): void {
+  const allLayers = ctx.map.getLayers();
+
+  // 一旦 layerStack の TileLayer 全部を map から取り除く
+  for (const tl of ctx.layerStack.values()) {
+    allLayers.remove(tl);
+  }
+  // selectionLayer の直前を再挿入位置とする helper
+  const reinsertAt = (): number => {
+    const arr = allLayers.getArray();
+    const idx = arr.indexOf(ctx.selectionLayer);
+    return idx >= 0 ? idx : arr.length;
+  };
+  // 1) orderedIds の順で再挿入 (重複 / 未知 ID は無視)
+  const seen = new Set<number>();
+  for (const id of orderedIds) {
+    if (seen.has(id)) continue;
+    const tl = ctx.layerStack.get(id);
+    if (!tl) continue;
+    seen.add(id);
+    allLayers.insertAt(reinsertAt(), tl);
+  }
+  // 2) layerStack に残っていて orderedIds に含まれない layer を末尾に追加
+  for (const [id, tl] of ctx.layerStack) {
+    if (seen.has(id)) continue;
+    allLayers.insertAt(reinsertAt(), tl);
+  }
+}
+
+/**
  * F405 (Phase F WF4): @deprecated 旧 setBaseLayerSource は wireLayerSelect 経路の互換のため残置。
  * 新規コードは addLayer/removeLayer を使うこと。
  */

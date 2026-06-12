@@ -64,4 +64,9 @@ public interface IApiClient
     Task<IReadOnlyList<OrgLayerPermissionDto>> GetOrgLayerPermissionsAsync(int orgId, CancellationToken ct);
     Task<IReadOnlyList<OrgLayerPermissionDto>> UpdateOrgLayerPermissionsAsync(
         int orgId, OrgLayerPermsUpsertDto req, CancellationToken ct);
+
+    // F'306 (Phase F' WF'3): user_preference (自己リソース)
+    //   GET: 404 → null を返却 (未設定扱い)、その他例外はそのまま投出
+    Task<UserPreferenceDto?> GetUserPreferenceAsync(string key, CancellationToken ct);
+    Task<UserPreferenceDto> PutUserPreferenceAsync(string key, UserPreferencePutDto req, CancellationToken ct);
 }

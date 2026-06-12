@@ -133,6 +133,25 @@ public sealed class FakeApiClient : IApiClient
             PermsByOrg.TryGetValue(orgId, out var p) ? p : new List<OrgLayerPermissionDto>());
     }
 
+    // F'306 (Phase F' WF'3): user_preference stub
+    public Dictionary<string, UserPreferenceDto> Preferences = new();
+    public int GetPreferenceCalls;
+    public int PutPreferenceCalls;
+
+    public Task<UserPreferenceDto?> GetUserPreferenceAsync(string key, CancellationToken ct)
+    {
+        GetPreferenceCalls++;
+        return Task.FromResult(Preferences.TryGetValue(key, out var p) ? p : null);
+    }
+
+    public Task<UserPreferenceDto> PutUserPreferenceAsync(string key, UserPreferencePutDto req, CancellationToken ct)
+    {
+        PutPreferenceCalls++;
+        var dto = new UserPreferenceDto(key, req.Value, DateTimeOffset.UtcNow);
+        Preferences[key] = dto;
+        return Task.FromResult(dto);
+    }
+
     public Task<IReadOnlyList<OrgLayerPermissionDto>> UpdateOrgLayerPermissionsAsync(
         int orgId, OrgLayerPermsUpsertDto req, CancellationToken ct)
     {

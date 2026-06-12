@@ -1,5 +1,5 @@
 import { createMap } from './map/mapInit';
-import { loadFeatures, wireLayerSelect, addLayer, removeLayer } from './controllers/layer';
+import { loadFeatures, wireLayerSelect, addLayer, removeLayer, reorderLayers } from './controllers/layer';
 import { wireRotation } from './controllers/rotation';
 import { wireSelection } from './controllers/selection';
 import { onMessage, sendToHost } from './bridge/webviewBridge';
@@ -8,7 +8,8 @@ import type {
   AuthTokenPayload,
   FeaturesReloadPayload,
   LayerSelectPayload,
-  LayerVisibilityChangePayload
+  LayerVisibilityChangePayload,
+  LayerOrderChangePayload
 } from './bridge/messages';
 import { changeAsOf } from './controllers/layer';
 import { setAccessToken, fetchLayers } from './api/client';
@@ -36,6 +37,10 @@ onMessage((msg) => {
   } else if (msg.type === 'layer_visibility_change') {
     const p = msg.payload as LayerVisibilityChangePayload;
     void handleLayerVisibilityChange(p);
+  } else if (msg.type === 'layer_order_change') {
+    // F'304 (Phase F' WF'3): WinForms から z-order 並べ替え通知
+    const p = msg.payload as LayerOrderChangePayload;
+    reorderLayers(ctx, p.layerIds);
   } else if (msg.type === 'features_reload') {
     const p = msg.payload as FeaturesReloadPayload;
     void loadFeatures(ctx, p.layerId, ctx.currentTheme, ctx.currentAsOf);
