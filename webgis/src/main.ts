@@ -1,5 +1,5 @@
 import { createMap } from './map/mapInit';
-import { loadFeatures, wireLayerSelect, addLayer, removeLayer, reorderLayers } from './controllers/layer';
+import { loadFeatures, wireLayerSelect, addLayer, removeLayer, reorderLayers, reloadLayerTiles } from './controllers/layer';
 import { wireRotation } from './controllers/rotation';
 import { wireSelection } from './controllers/selection';
 import { onMessage, sendToHost } from './bridge/webviewBridge';
@@ -42,8 +42,12 @@ onMessage((msg) => {
     const p = msg.payload as LayerOrderChangePayload;
     reorderLayers(ctx, p.layerIds);
   } else if (msg.type === 'features_reload') {
+    // F'306 (Phase F' polish): 属性更新後のタイル無効化。
+    //   旧実装は loadFeatures を呼んでいたため view.fit で縮尺がリセットされ、
+    //   さらに他 layer が削除される副作用があった。reloadLayerTiles で
+    //   該当 layer の source 差替 + cache buster のみ。
     const p = msg.payload as FeaturesReloadPayload;
-    void loadFeatures(ctx, p.layerId, ctx.currentTheme, ctx.currentAsOf);
+    reloadLayerTiles(ctx, p.layerId);
   } else if (msg.type === 'asof_change') {
     // E401 (WE4): WinForms の DateTimePicker 値変更通知
     const p = msg.payload as AsOfChangePayload;
