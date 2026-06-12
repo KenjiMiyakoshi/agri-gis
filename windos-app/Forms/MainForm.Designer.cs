@@ -68,9 +68,10 @@ partial class MainForm
         // F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え可能に
         layerList.Dock = DockStyle.Top;
         layerList.Height = 180;
-        // F'304 hotfix: CheckOnClick=false。MouseDown→ItemCheck の即時反転を抑え、
-        //   ドラッグ判定 (threshold) を経て click かどうかを MouseUp で判定する。
-        layerList.CheckOnClick = false;
+        // F'304 hotfix-3: CheckOnClick=true (native の 1-click toggle に任せる)。
+        //   drag 中の native ItemCheck は ItemCheck ハンドラ側で _dragStarted を見て
+        //   キャンセルする方式に変更。MouseUp 内 SetItemChecked の再入問題を回避。
+        layerList.CheckOnClick = true;
         layerList.IntegralHeight = false;
         layerList.AllowDrop = true;          // F'304: drag-and-drop 受領
 

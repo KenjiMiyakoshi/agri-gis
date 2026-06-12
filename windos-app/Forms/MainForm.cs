@@ -249,9 +249,17 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     // F301 (Phase F WF3): CheckedListBox の ItemCheck で layer_visibility_change を bridge 経由で WebGIS に通知。
     // CheckedListBox.ItemCheck は **状態変更前** に発火するので、NewValue から visible を取る。
     // F'305 (Phase F' WF'3): check 変更後に SaveLayerOrderAsync で永続化
+    // F'304 hotfix-3: drag 中に native が ItemCheck を発火するケース (DoDragDrop 後の
+    //   残留 WM_LBUTTONUP) では NewValue=CurrentValue にしてトグルそのものを抑止する。
     private void OnLayerListItemCheck(object? sender, ItemCheckEventArgs e)
     {
         if (_suppressItemCheck) return;
+        if (_dragStarted)
+        {
+            // drag 中 / drag 直後: 視覚も内部状態も変更させない
+            e.NewValue = e.CurrentValue;
+            return;
+        }
         if (e.Index < 0 || e.Index >= layerList.Items.Count) return;
         if (layerList.Items[e.Index] is not LayerListItem item) return;
         var layer = item.Layer;
@@ -316,28 +324,16 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         _dragStarted = false;
     }
 
-    // F'304 hotfix: drag が起こらなかった場合のみ check を toggle する。
-    //   これで「drag するつもりで掴んだら toggle されちゃう」問題を防ぐ。
-    // F'304 hotfix-2: SetItemChecked を MouseUp 内から直接呼ぶと native CheckedListBox の
-    //   WM_LBUTTONUP 処理と再入が起き、ItemCheck イベントは発火する (= bridge.Send は走る) のに
-    //   listbox 視覚が追従しない。BeginInvoke で WM_LBUTTONUP 完了後にディスパッチする。
-    //   ついでに IndexFromPoint との比較は外し、MouseDown 時の index を信頼する。
+    // F'304 hotfix-3: native の CheckOnClick=true に toggle を任せたので、
+    //   MouseUp では state のリセットだけ行う。drag 後の native MouseUp / ItemCheck は
+    //   ItemCheck ハンドラ側で _dragStarted を見てキャンセル済み。
+    //   _dragStarted のリセットは ItemCheck がここより先に走るためここで行う (ItemCheck は
+    //   WM_LBUTTONUP 処理中、MouseUp イベントはその後)。
     private void OnLayerListMouseUp(object? sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left) return;
-        var src = _dragSourceIndex;
-        var dragged = _dragStarted;
         _dragSourceIndex = -1;
         _dragStarted = false;
-        if (dragged) return;  // drag は DragDrop 側で処理済み
-        if (src < 0 || src >= layerList.Items.Count) return;
-        BeginInvoke(new Action(() =>
-        {
-            if (src >= 0 && src < layerList.Items.Count)
-            {
-                layerList.SetItemChecked(src, !layerList.GetItemChecked(src));
-            }
-        }));
     }
 
     private void OnLayerListMouseMove(object? sender, MouseEventArgs e)
