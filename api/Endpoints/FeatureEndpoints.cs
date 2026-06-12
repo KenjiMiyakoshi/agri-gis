@@ -110,8 +110,20 @@ public static class FeatureEndpoints
         });
 
         // 0210: POST /api/features
-        group.MapPost("/", async (CreateFeatureRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
+        // F204 (Phase F WF2): org_layer_permission.can_edit 検査を追加。
+        // admin role は service 内で bypass、それ以外は false なら 403。
+        group.MapPost("/", async (CreateFeatureRequestDto req, HttpContext ctx, ICurrentUser user,
+                                   ILayerPermissionService perm, NpgsqlDataSource db, CancellationToken ct) =>
         {
+            if (!await perm.CanEditAsync(user.OrgId, req.LayerId, user.Roles, ct))
+            {
+                return Results.Problem(
+                    type: "https://docs.agri-gis/errors/layer-permission-denied",
+                    title: "Edit denied for this layer",
+                    detail: $"Your organization does not have can_edit for layer {req.LayerId}.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
             var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
 
@@ -164,8 +176,10 @@ public static class FeatureEndpoints
         }).RequireAuthorization("WriteFeature");
 
         // 0211: PATCH /api/features/{entityId} (If-Match 必須、楽観ロック)
+        // F204 (Phase F WF2): entity 所属 layer の can_edit を検査。
         group.MapPatch("/{entityId:guid}",
-            async (Guid entityId, UpdateFeatureRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
+            async (Guid entityId, UpdateFeatureRequestDto req, HttpContext ctx, ICurrentUser user,
+                   ILayerPermissionService perm, NpgsqlDataSource db, CancellationToken ct) =>
         {
             var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
@@ -176,10 +190,11 @@ public static class FeatureEndpoints
                 return Results.StatusCode(StatusCodes.Status428PreconditionRequired);
             }
 
-            // 現行 layer の schema を取得（属性バリデーション用）
+            // 現行 layer の schema + layer_id を取得（属性バリデーション + can_edit 用）
             LayerSchemaDto schema;
+            int entityLayerId;
             await using (var c = db.CreateCommand(
-                @"SELECT l.schema_json
+                @"SELECT l.schema_json, l.layer_id
                     FROM feature_current fc
                     JOIN layers l ON l.layer_id = fc.layer_id
                    WHERE fc.entity_id = @e AND l.valid_to = '9999-12-31'::date"))
@@ -192,6 +207,16 @@ public static class FeatureEndpoints
                 }
                 schema = JsonSerializer.Deserialize<LayerSchemaDto>(rr.GetString(0), JsonOpts.Default)
                          ?? new LayerSchemaDto(Array.Empty<SchemaFieldDto>());
+                entityLayerId = rr.GetInt32(1);
+            }
+
+            if (!await perm.CanEditAsync(user.OrgId, entityLayerId, user.Roles, ct))
+            {
+                return Results.Problem(
+                    type: "https://docs.agri-gis/errors/layer-permission-denied",
+                    title: "Edit denied for this layer",
+                    detail: $"Your organization does not have can_edit for layer {entityLayerId}.",
+                    statusCode: StatusCodes.Status403Forbidden);
             }
 
             if (req.Attributes is { } attrs)
@@ -225,8 +250,10 @@ public static class FeatureEndpoints
         // D'104 (WD'1): POST /api/features/batch — N 件まとめて属性 patch (all-or-nothing)
         // 楽観ロック (entityIds × ifMatchVersions の全件突合)、1 件 mismatch → 409 + 全件 rollback。
         // geometry は不変、属性のみ JSONB merge (`||`) で patch。
+        // F204 (Phase F WF2): entityIds が跨る全 layer について can_edit を検査 (1件でも false なら 403)。
         group.MapPost("/batch", async (
-            FeatureBatchUpdateRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
+            FeatureBatchUpdateRequestDto req, HttpContext ctx, ICurrentUser user,
+            ILayerPermissionService perm, NpgsqlDataSource db, CancellationToken ct) =>
         {
             // 入力検証
             var errs = new List<AttributeErrorDto>();
@@ -242,6 +269,34 @@ public static class FeatureEndpoints
                 errs.Add(new AttributeErrorDto("entityIds", "limit",
                     "entityIds limit is 1000 per batch"));
             if (errs.Count > 0) throw new ValidationException(errs);
+
+            // F204: 対象 entity が属する全 layer を取得し、can_edit を検査
+            // admin role 持ちは service 内で bypass されるので DB query 不要
+            if (!user.HasRole("admin"))
+            {
+                await using var lcmd = db.CreateCommand(
+                    @"SELECT DISTINCT layer_id FROM feature_current
+                       WHERE entity_id = ANY(@eids)
+                         AND EXISTS (SELECT 1 FROM layers l WHERE l.layer_id = feature_current.layer_id
+                                                              AND l.valid_to = '9999-12-31'::date)");
+                lcmd.Parameters.AddWithValue("eids", req.EntityIds!.ToArray());
+                var layerIds = new List<int>();
+                await using (var lr = await lcmd.ExecuteReaderAsync(ct))
+                {
+                    while (await lr.ReadAsync(ct)) layerIds.Add(lr.GetInt32(0));
+                }
+                foreach (var lid in layerIds)
+                {
+                    if (!await perm.CanEditAsync(user.OrgId, lid, user.Roles, ct))
+                    {
+                        return Results.Problem(
+                            type: "https://docs.agri-gis/errors/layer-permission-denied",
+                            title: "Edit denied for one or more layers in batch",
+                            detail: $"Your organization does not have can_edit for layer {lid}.",
+                            statusCode: StatusCodes.Status403Forbidden);
+                    }
+                }
+            }
 
             var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
@@ -289,24 +344,38 @@ public static class FeatureEndpoints
         }).RequireAuthorization("WriteFeature");
 
         // 0212: DELETE /api/features/{entityId} (履歴退避 + current から削除)
+        // F204 (Phase F WF2): entity 所属 layer の can_edit を検査。
         group.MapDelete("/{entityId:guid}",
-            async (Guid entityId, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
+            async (Guid entityId, HttpContext ctx, ICurrentUser user,
+                   ILayerPermissionService perm, NpgsqlDataSource db, CancellationToken ct) =>
         {
             var actor = user.DisplayName;
             var rid = RequestContext.GetRequestId(ctx);
 
-            // WB2 B205: 論理削除レイヤの feature は触れない (404 で弾く)
+            // WB2 B205 + F204: 論理削除レイヤの feature は触れない (404)、layer_id を取得し can_edit 検査
+            int entityLayerId;
             await using (var precheck = db.CreateCommand(
-                @"SELECT 1
+                @"SELECT l.layer_id
                     FROM feature_current fc
                     JOIN layers l ON l.layer_id = fc.layer_id
                    WHERE fc.entity_id = @e AND l.valid_to = '9999-12-31'::date"))
             {
                 precheck.Parameters.AddWithValue("e", entityId);
-                if (await precheck.ExecuteScalarAsync() is null)
+                var lid = await precheck.ExecuteScalarAsync();
+                if (lid is null)
                 {
                     throw new NotFoundException($"entity not found: {entityId}");
                 }
+                entityLayerId = (int)lid;
+            }
+
+            if (!await perm.CanEditAsync(user.OrgId, entityLayerId, user.Roles, ct))
+            {
+                return Results.Problem(
+                    type: "https://docs.agri-gis/errors/layer-permission-denied",
+                    title: "Edit denied for this layer",
+                    detail: $"Your organization does not have can_edit for layer {entityLayerId}.",
+                    statusCode: StatusCodes.Status403Forbidden);
             }
 
             await using var cmd = db.CreateCommand(

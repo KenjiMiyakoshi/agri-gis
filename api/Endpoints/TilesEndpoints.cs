@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgriGis.Api.Auth;
 using AgriGis.Api.Options;
 using AgriGis.Api.Shared;
 using AgriGis.Api.Tiles;
@@ -24,11 +25,26 @@ public static class TilesEndpoints
             async (int layerId, string theme, int z, int x, int y, string? asOf, string? sv,
                    IHttpClientFactory httpClientFactory,
                    IOptions<GeoServerOptions> geoOpts,
+                   ICurrentUser user,
+                   ILayerPermissionService perm,
                    CancellationToken ct) =>
         {
             // E205 (WE2): asOf 対応
             // D'102 (WD'1): sv は URL 一意性のためのみ受領 (API ロジックには使わない、cache key を変える役割)
             _ = sv;
+
+            // F205 (Phase F WF2): URL 直叩き対策 (深層防御)。
+            // /api/layers の org フィルタを WebGIS 側でバイパスして tile を直接叩かれた場合に備える。
+            // admin は service 内で bypass。
+            if (!await perm.CanViewAsync(user.OrgId, layerId, user.Roles, ct))
+            {
+                return Results.Problem(
+                    type: "https://docs.agri-gis/errors/layer-permission-denied",
+                    title: "View denied for this layer",
+                    detail: $"Your organization does not have can_view for layer {layerId}.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
             var asOfDate = AsOfParser.TryParse(asOf);
             // theme 名 validation
             if (!ThemeNameRegex.IsMatch(theme))

@@ -117,6 +117,9 @@ builder.Services.AddAuthorization(o =>
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
+// F204 (Phase F WF2): 組織×レイヤ権限サービス
+builder.Services.AddScoped<ILayerPermissionService, LayerPermissionService>();
+
 // A203: 401/403 を ProblemDetails 形式で返す
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, ProblemDetailsAuthorizationResultHandler>();
 
@@ -151,6 +154,8 @@ app.MapGroup("/api/features").MapFeatureEndpoints().RequireAuthorization();
 var adminGroup = app.MapGroup("/api/admin").RequireAuthorization(p => p.RequireRole("admin"));
 adminGroup.MapAdminEndpoints();
 adminGroup.MapGroup("/organizations").MapAdminOrgsEndpoints();
+// F203 (Phase F WF2): 組織×レイヤ権限管理 endpoint (GET/PUT /api/admin/organizations/{orgId}/layer-permissions)
+adminGroup.MapGroup("/organizations").MapAdminOrgLayerPermissionsEndpoints();
 adminGroup.MapGroup("/users").MapAdminUsersEndpoints();
 adminGroup.MapGroup("/layers").MapAdminLayersEndpoints();
 // D203 (WD2): admin theme CRUD (GET/PUT /api/admin/layers/{id}/style)

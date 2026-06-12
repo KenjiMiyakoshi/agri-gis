@@ -30,7 +30,11 @@ public sealed class PostgisContainerFixture : IAsyncLifetime
         //    init の seed は後で TRUNCATE+再投入 (DbReset) で扱うので、ここでは 001_init のみ流して
         //    その後に migration 群 → 最後に 002_seed を流す。
         await RunSqlFile("db/init/001_init.sql");
-        foreach (var f in Directory.EnumerateFiles(SolutionRoot.Resolve("db/migration"), "*.sql").OrderBy(x => x))
+        // 注: OrderBy(x => x) は既定で culture-aware で、Windows では `_` が `.` より小さく扱われ、
+        // `0F03_org_layer_permission_backfill.sql` が `0F03_org_layer_permission.sql` より
+        // 前に並んでしまう。ordinal 比較で「文字コード順」を強制する (Linux の `sort` と一致)。
+        foreach (var f in Directory.EnumerateFiles(SolutionRoot.Resolve("db/migration"), "*.sql")
+                                   .OrderBy(x => x, StringComparer.Ordinal))
         {
             await RunSqlFile(f, alreadyAbsolute: true);
         }
@@ -50,7 +54,14 @@ public sealed class PostgisContainerFixture : IAsyncLifetime
     {
         var fullPath = alreadyAbsolute ? path : SolutionRoot.Resolve(path);
         var sql = await File.ReadAllTextAsync(fullPath);
-        await ExecuteAsync(sql);
+        try
+        {
+            await ExecuteAsync(sql);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"migration file failed: {Path.GetFileName(fullPath)}", ex);
+        }
     }
 
     private async Task ExecuteAsync(string sql)
