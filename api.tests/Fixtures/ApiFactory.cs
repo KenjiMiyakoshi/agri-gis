@@ -11,10 +11,13 @@ namespace AgriGis.Api.Tests.Fixtures;
 public sealed class ApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString;
+    // F'401 (Phase F' WF'4): テストから追加 service 差し替えを注入できるフック
+    private readonly Action<IServiceCollection>? _extraConfigure;
 
-    public ApiFactory(string connectionString)
+    public ApiFactory(string connectionString, Action<IServiceCollection>? extraConfigure = null)
     {
         _connectionString = connectionString;
+        _extraConfigure = extraConfigure;
     }
 
     // D103 (WD1) テスト用: TokenForge / WithActorAs が user_sessions に INSERT する際に使う
@@ -43,6 +46,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             services.AddScoped<IGeoServerStyleSync, FakeGeoServerStyleSync>();
             services.AddHttpClient("geoserver")
                 .ConfigurePrimaryHttpMessageHandler(() => new FakeGeoServerHandler());
+            // F'401 (Phase F' WF'4): 個別テストからの追加差し替え (broker spy など)
+            _extraConfigure?.Invoke(services);
         });
     }
 }

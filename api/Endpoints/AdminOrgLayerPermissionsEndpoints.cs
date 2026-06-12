@@ -1,6 +1,7 @@
 using AgriGis.Api.Auth;
 using AgriGis.Api.Dto;
 using AgriGis.Api.Errors;
+using AgriGis.Api.Services;
 using Npgsql;
 
 namespace AgriGis.Api.Endpoints;
@@ -58,7 +59,8 @@ public static class AdminOrgLayerPermissionsEndpoints
         // 部分更新 (送られた layerId のみ) は許容、送られなかった layer は変更されない。
         group.MapPut("/{orgId:int}/layer-permissions",
             async (int orgId, OrgLayerPermsUpsertDto req, HttpContext ctx,
-                   ICurrentUser user, NpgsqlDataSource db) =>
+                   ICurrentUser user, NpgsqlDataSource db,
+                   ILayerInvalidationBroker broker) =>
         {
             // 入力検証
             var errs = new List<AttributeErrorDto>();
@@ -121,6 +123,19 @@ public static class AdminOrgLayerPermissionsEndpoints
             }
 
             await tx.CommitAsync();
+
+            // F'401 (Phase F' WF'4): tx commit 後に broker.PublishPermissionInvalidate を fire。
+            // 該当 org に所属する user の WebGIS SSE に届き、tile cache 即時 flush + fetchLayers 再取得が走る。
+            // 失敗しても endpoint 自体は成功扱い (broker は best-effort)。
+            try
+            {
+                var changedLayerIds = req.Permissions!.Select(p => p.LayerId).Distinct().ToList();
+                broker.PublishPermissionInvalidate(orgId, changedLayerIds);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[AdminOrgLayerPermissionsEndpoints] broker.Publish failed: {ex.Message}");
+            }
 
             // 更新後の全権限を再取得して返す
             const string returnSql = @"
