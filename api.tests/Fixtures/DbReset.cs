@@ -18,6 +18,8 @@ public static class DbReset
         DELETE FROM layer_import_job;
         DELETE FROM layers;
         ALTER SEQUENCE layers_layer_id_seq RESTART WITH 1;
+        DELETE FROM layer_group;
+        ALTER SEQUENCE layer_group_group_id_seq RESTART WITH 1;
         DELETE FROM user_roles;
         DELETE FROM users;
         DELETE FROM organizations;
