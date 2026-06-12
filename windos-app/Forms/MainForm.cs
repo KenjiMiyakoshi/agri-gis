@@ -36,8 +36,10 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         // F'304 (Phase F' WF'3): layerList drag-and-drop で z-order 並べ替え
         layerList.MouseDown += OnLayerListMouseDown;
         layerList.MouseMove += OnLayerListMouseMove;
+        layerList.MouseUp += OnLayerListMouseUp;  // F'304 hotfix: click 判定 (drag でなければ toggle)
         layerList.DragOver += OnLayerListDragOver;
         layerList.DragDrop += OnLayerListDragDrop;
+        layerList.DragLeave += OnLayerListDragLeave;  // F'304 hotfix: indicator クリア
         // F'304 hotfix: ドラッグ中の視覚フィードバック (ghost form + cursor 変更)
         layerList.GiveFeedback += OnLayerListGiveFeedback;
         attributeEditor.Saved += OnAttributeEditorSaved;
@@ -247,9 +249,17 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     // F301 (Phase F WF3): CheckedListBox の ItemCheck で layer_visibility_change を bridge 経由で WebGIS に通知。
     // CheckedListBox.ItemCheck は **状態変更前** に発火するので、NewValue から visible を取る。
     // F'305 (Phase F' WF'3): check 変更後に SaveLayerOrderAsync で永続化
+    // F'304 hotfix-3: drag 中に native が ItemCheck を発火するケース (DoDragDrop 後の
+    //   残留 WM_LBUTTONUP) では NewValue=CurrentValue にしてトグルそのものを抑止する。
     private void OnLayerListItemCheck(object? sender, ItemCheckEventArgs e)
     {
         if (_suppressItemCheck) return;
+        if (_dragStarted)
+        {
+            // drag 中 / drag 直後: 視覚も内部状態も変更させない
+            e.NewValue = e.CurrentValue;
+            return;
+        }
         if (e.Index < 0 || e.Index >= layerList.Items.Count) return;
         if (layerList.Items[e.Index] is not LayerListItem item) return;
         var layer = item.Layer;
@@ -264,6 +274,9 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     // ====== F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え ======
     private int _dragSourceIndex = -1;
     private Point _dragStartPoint;
+    // F'304 hotfix: drag が実際に開始されたか (threshold 超え) を追跡。
+    //   MouseUp で「drag せず click だった」と判定する場合に check toggle を発火させる。
+    private bool _dragStarted;
     // F'304 hotfix: ドラッグ中のゴースト (マウス追従表示)
     private DragGhostForm? _dragGhost;
 
@@ -308,16 +321,30 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         if (e.Button != MouseButtons.Left) return;
         _dragSourceIndex = layerList.IndexFromPoint(e.Location);
         _dragStartPoint = e.Location;
+        _dragStarted = false;
+    }
+
+    // F'304 hotfix-3: native の CheckOnClick=true に toggle を任せたので、
+    //   MouseUp では state のリセットだけ行う。drag 後の native MouseUp / ItemCheck は
+    //   ItemCheck ハンドラ側で _dragStarted を見てキャンセル済み。
+    //   _dragStarted のリセットは ItemCheck がここより先に走るためここで行う (ItemCheck は
+    //   WM_LBUTTONUP 処理中、MouseUp イベントはその後)。
+    private void OnLayerListMouseUp(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left) return;
+        _dragSourceIndex = -1;
+        _dragStarted = false;
     }
 
     private void OnLayerListMouseMove(object? sender, MouseEventArgs e)
     {
-        if (e.Button != MouseButtons.Left || _dragSourceIndex < 0) return;
+        if (e.Button != MouseButtons.Left || _dragSourceIndex < 0 || _dragStarted) return;
         // SystemInformation.DragSize の閾値を越えたら drag 開始 (click と区別)
         var dx = Math.Abs(e.X - _dragStartPoint.X);
         var dy = Math.Abs(e.Y - _dragStartPoint.Y);
         if (dx < SystemInformation.DragSize.Width && dy < SystemInformation.DragSize.Height) return;
 
+        _dragStarted = true;
         // F'304 hotfix: ゴースト Form を表示してドラッグ中のレイヤ名をマウスに追従させる
         if (_dragSourceIndex < layerList.Items.Count &&
             layerList.Items[_dragSourceIndex] is LayerListItem li)
@@ -337,6 +364,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         finally
         {
             _dragGhost?.Hide();
+            layerList.ClearDropIndicator();
             _dragSourceIndex = -1;
         }
     }
@@ -345,13 +373,30 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     {
         if (e.Data?.GetDataPresent(typeof(int)) != true) return;
         e.Effect = DragDropEffects.Move;
-        // F'304 hotfix: カーソル下の項目を選択ハイライトして drop 位置を視覚化
+        // F'304 hotfix: drop 位置を青いラインで視覚化
+        //   - カーソル下の item の上半分 → 上に挿入 (above)
+        //   - 下半分 → 下に挿入 (below)
+        //   - リスト外下方 → 末尾
         var point = layerList.PointToClient(new Point(e.X, e.Y));
         var idx = layerList.IndexFromPoint(point);
-        if (idx >= 0 && idx < layerList.Items.Count && layerList.SelectedIndex != idx)
+        if (idx < 0)
         {
-            layerList.SelectedIndex = idx;
+            // 範囲外 = 末尾
+            layerList.SetDropIndicator(layerList.Items.Count, true);
         }
+        else
+        {
+            var rect = layerList.GetItemRectangle(idx);
+            var mid = (rect.Top + rect.Bottom) / 2;
+            var above = point.Y < mid;
+            layerList.SetDropIndicator(idx, above);
+        }
+    }
+
+    // F'304 hotfix: ドラッグがリスト外に出たら indicator を消す
+    private void OnLayerListDragLeave(object? sender, EventArgs e)
+    {
+        layerList.ClearDropIndicator();
     }
 
     // F'304 hotfix: ドラッグ中のカーソル変更 + ゴースト Form をマウスに追従
@@ -369,10 +414,21 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
     private void OnLayerListDragDrop(object? sender, DragEventArgs e)
     {
         var src = (int)(e.Data?.GetData(typeof(int)) ?? -1);
+        // F'304 hotfix-2: ClearDropIndicator() より先に drop target を読む。
+        //   ClearDropIndicator() は _dropIndicatorIndex = -1 にリセットするため、
+        //   その後に GetDropTargetIndex() を呼ぶと常に -1 が返り、並べ替えが一切走らなくなる。
+        var insertAt = layerList.GetDropTargetIndex();
+        layerList.ClearDropIndicator();
         if (src < 0 || src >= layerList.Items.Count) return;
-        var point = layerList.PointToClient(new Point(e.X, e.Y));
-        var dst = layerList.IndexFromPoint(point);
-        if (dst < 0) dst = layerList.Items.Count - 1;
+        if (insertAt < 0)
+        {
+            // indicator が無い (DragLeave 経由など) → 何もしない
+            return;
+        }
+        // src を取り除くと src 以降の index が 1 つずれるので調整
+        var dst = insertAt > src ? insertAt - 1 : insertAt;
+        if (dst < 0) dst = 0;
+        if (dst > layerList.Items.Count - 1) dst = layerList.Items.Count - 1;
         if (src == dst) return;
 
         _suppressItemCheck = true;
