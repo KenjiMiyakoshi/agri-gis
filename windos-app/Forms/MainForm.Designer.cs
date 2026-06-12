@@ -12,7 +12,8 @@ partial class MainForm
     private Label layerLabel = null!;
     // F301 (Phase F WF3): 複数 layer を同時 ON/OFF できる CheckedListBox に変更
     // 旧 layerCombo (ComboBox) は WD4 まで「単一選択」だったが、F 以降は複数表示が前提
-    internal CheckedListBox layerList = null!;
+    // F'304 hotfix: drop indicator 描画用に DragAwareCheckedListBox (CheckedListBox 派生) に置換
+    internal DragAwareCheckedListBox layerList = null!;
     private AttributeEditorControl attributeEditor = null!;
     private StatusStrip statusStrip = null!;
     private ToolStripStatusLabel statusLabel = null!;
@@ -37,7 +38,7 @@ partial class MainForm
         webView = new WebView2();
         rightPanel = new Panel();
         layerLabel = new Label();
-        layerList = new CheckedListBox();
+        layerList = new DragAwareCheckedListBox();
         attributeEditor = new AttributeEditorControl();
         statusStrip = new StatusStrip();
         statusLabel = new ToolStripStatusLabel();
@@ -67,7 +68,9 @@ partial class MainForm
         // F'304 (Phase F' WF'3): drag-and-drop で z-order 並べ替え可能に
         layerList.Dock = DockStyle.Top;
         layerList.Height = 180;
-        layerList.CheckOnClick = true;       // 1 クリックでチェック切替 (2 クリック不要)
+        // F'304 hotfix: CheckOnClick=false。MouseDown→ItemCheck の即時反転を抑え、
+        //   ドラッグ判定 (threshold) を経て click かどうかを MouseUp で判定する。
+        layerList.CheckOnClick = false;
         layerList.IntegralHeight = false;
         layerList.AllowDrop = true;          // F'304: drag-and-drop 受領
 
