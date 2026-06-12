@@ -165,6 +165,23 @@ export function reorderLayers(ctx: MapContext, orderedIds: number[]): void {
 }
 
 /**
+ * F'306 (Phase F' polish): 単一 layer のタイル cache を bust する (属性編集後など、
+ * 縮尺・他 layer 状態に副作用を出さずに再描画したい時用)。
+ *   - loadFeatures は内部で view.fit + 他 layer 削除を行うため属性更新では不適
+ *   - 該当 layer が layerStack に居なければ no-op
+ *   - URL 末尾に `_b={timestamp}` を付けて browser HTTP cache + OL 内 tile cache を同時 bust
+ */
+export function reloadLayerTiles(ctx: MapContext, layerId: number, busterValue: number = Date.now()): void {
+  const existing = ctx.layerStack.get(layerId);
+  if (!existing) return;
+  const theme = ctx.themeByLayer.get(layerId) ?? 'default';
+  const sv = ctx.styleVersionByLayer.get(layerId) ?? null;
+  const base = buildTileUrl(layerId, theme, ctx.currentAsOf, sv);
+  const url = base + (base.includes('?') ? '&' : '?') + '_b=' + busterValue;
+  existing.setSource(buildXyzSource(url));
+}
+
+/**
  * F405 (Phase F WF4): @deprecated 旧 setBaseLayerSource は wireLayerSelect 経路の互換のため残置。
  * 新規コードは addLayer/removeLayer を使うこと。
  */
