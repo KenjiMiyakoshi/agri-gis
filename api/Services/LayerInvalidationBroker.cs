@@ -10,17 +10,34 @@ namespace AgriGis.Api.Services;
 // SubscribeAsync(layerId) で IAsyncEnumerable<LayerInvalidationEvent> として 取り出す。
 // 直近 5 秒分の event は ReplayRecent(layerId) で再送 (reconnect 取りこぼし対策)。
 
+// F'103 (Phase F' WF'1): reason に 'permission' を追加 + 影響を受ける org_id を併送。
+//   reason: 'feature' | 'style' | 'layer' | 'permission'
+//   AffectedOrgId は permission event のみ非 null (それ以外は null)。
 public sealed record LayerInvalidationEvent(
     [property: JsonPropertyName("layerId")] int LayerId,
     [property: JsonPropertyName("reason")] string Reason,
     [property: JsonPropertyName("action")] string? Action,
     [property: JsonPropertyName("styleVersion")] int? StyleVersion,
-    [property: JsonPropertyName("occurredAt")] DateTime OccurredAt);
+    [property: JsonPropertyName("occurredAt")] DateTime OccurredAt,
+    [property: JsonPropertyName("affectedOrgId")] int? AffectedOrgId = null);
 
 public interface ILayerInvalidationBroker
 {
     IAsyncEnumerable<LayerInvalidationEvent> SubscribeAsync(int layerId, CancellationToken ct);
     IEnumerable<LayerInvalidationEvent> ReplayRecent(int layerId, TimeSpan window);
+
+    // F'102 (Phase F' WF'1): 複数 layer をまとめて購読
+    // 引数の layerIds はソート済の必要なし、broker 側で HashSet にする
+    IAsyncEnumerable<LayerInvalidationEvent> SubscribeMultiAsync(
+        IReadOnlyList<int> layerIds, CancellationToken ct);
+
+    IEnumerable<LayerInvalidationEvent> ReplayRecentMulti(
+        IReadOnlyList<int> layerIds, TimeSpan window);
+
+    // F'104 (Phase F' WF'1): 権限変更の publish
+    //   org に所属する全 user の WebGIS に「該当 layer の権限が変わった可能性あり」を通知。
+    //   affectedLayerIds の各 layer について 1 event を fire (個別配信)。
+    void PublishPermissionInvalidate(int orgId, IReadOnlyList<int> affectedLayerIds);
 }
 
 public sealed class PostgresLayerInvalidationBroker
@@ -122,6 +139,28 @@ public sealed class PostgresLayerInvalidationBroker
         }
     }
 
+    public async IAsyncEnumerable<LayerInvalidationEvent> SubscribeMultiAsync(
+        IReadOnlyList<int> layerIds,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var idSet = new HashSet<int>(layerIds);
+        var channel = Channel.CreateBounded<LayerInvalidationEvent>(
+            new BoundedChannelOptions(256) { FullMode = BoundedChannelFullMode.DropOldest });
+        lock (_subscribersLock) _subscribers.Add(channel);
+        try
+        {
+            await foreach (var ev in channel.Reader.ReadAllAsync(ct))
+            {
+                if (idSet.Contains(ev.LayerId)) yield return ev;
+            }
+        }
+        finally
+        {
+            lock (_subscribersLock) _subscribers.Remove(channel);
+            channel.Writer.TryComplete();
+        }
+    }
+
     public IEnumerable<LayerInvalidationEvent> ReplayRecent(int layerId, TimeSpan window)
     {
         lock (_replayLock)
@@ -130,6 +169,45 @@ public sealed class PostgresLayerInvalidationBroker
             return _replay
                 .Where(e => e.LayerId == layerId && e.OccurredAt >= cutoff)
                 .ToList();
+        }
+    }
+
+    public IEnumerable<LayerInvalidationEvent> ReplayRecentMulti(IReadOnlyList<int> layerIds, TimeSpan window)
+    {
+        var idSet = new HashSet<int>(layerIds);
+        lock (_replayLock)
+        {
+            var cutoff = DateTime.UtcNow - window;
+            return _replay
+                .Where(e => idSet.Contains(e.LayerId) && e.OccurredAt >= cutoff)
+                .ToList();
+        }
+    }
+
+    public void PublishPermissionInvalidate(int orgId, IReadOnlyList<int> affectedLayerIds)
+    {
+        // F'104: 各 layer について permission_invalidate event を 1 件 fire (subscribers の layer filter で自動振分け)
+        var now = DateTime.UtcNow;
+        foreach (var layerId in affectedLayerIds)
+        {
+            var ev = new LayerInvalidationEvent(
+                LayerId: layerId,
+                Reason: "permission",
+                Action: null,
+                StyleVersion: null,
+                OccurredAt: now,
+                AffectedOrgId: orgId);
+            lock (_replayLock)
+            {
+                _replay.Enqueue(ev);
+                while (_replay.Count > 100) _replay.Dequeue();
+            }
+            List<Channel<LayerInvalidationEvent>> snapshot;
+            lock (_subscribersLock) snapshot = new(_subscribers);
+            foreach (var ch in snapshot)
+            {
+                ch.Writer.TryWrite(ev);
+            }
         }
     }
 
