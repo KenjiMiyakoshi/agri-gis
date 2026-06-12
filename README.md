@@ -225,17 +225,27 @@ dotnet run
 
 - **Phase B 対応形式**: GeoJSON + CSV (lat/lng 列) — `System.Text.Json` + `ProjNet` で C# pure
 - **Phase C 追加**: Shapefile zip — `MaxRev.Gdal.WindowsRuntime.Minimal` SKU 同梱 (x64 固定)、`.cpg` fallback + 3 値 SRID 設定駆動 (`Reject` / `PromptUser` / `AssumeWgs84`)、`audit_log.meta_jsonb.srid_inferred` で監査
-- **Phase C' 申し送り**: MapInfo MIF/MID, TAB (Minimal SKU 含有確認済、Full SKU 切替不要)
+- **Phase C' 追加**: MapInfo MIF/MID, TAB (Minimal SKU 含有確認済)
 
 詳細は [docs/layer-import.md](docs/layer-import.md) / [docs/PHASE_B_INDEX.md](docs/PHASE_B_INDEX.md) / [docs/PHASE_C_INDEX.md](docs/PHASE_C_INDEX.md)。
+
+## Phase F: 複数レイヤ同時表示 + 組織×レイヤ権限
+
+- **複数レイヤ同時表示**: 右パネル「表示レイヤ:」CheckedListBox で ON/OFF。チェックされた全 layer が地図に重ね表示される。クリック時は最上位 layer の最近接 feature を採用 (複数 hit 集約は F' 申し送り)
+- **組織×レイヤ権限**: `org_layer_permission(org_id, layer_id, can_view, can_edit)` テーブルで管理。admin role は filter bypass。一般 user は所属組織の権限に応じて `GET /api/layers` がフィルタされ、`POST/PATCH/DELETE /api/features` の can_edit / `GET /tiles/{layerId}` の can_view が検査される (深層防御)
+- **権限管理 UI**: admin で「管理 → レイヤ管理 → 権限管理...」から `OrgPermissionsForm` を起動 → 組織 ComboBox 選択 → DataGridView の `閲覧可` / `編集可` CheckBox を切替 → 保存
+- **AttributeEditor read-only 条件**: guest role || asOf 過去時点モード || 該当 layer の `canEdit=false` のいずれかで save 不可
+
+詳細は [docs/PHASE_F_INDEX.md](docs/PHASE_F_INDEX.md) / [docs/PHASE_F_COMPLETE.md](docs/PHASE_F_COMPLETE.md) / [docs/org-layer-permission.md](docs/org-layer-permission.md) / [docs/multi-layer-display.md](docs/multi-layer-display.md) / [docs/manual-verification-phase-f.md](docs/manual-verification-phase-f.md)。
 
 ## 既知の制約
 
 - **refresh token なし**：Phase A は access 8h のみ。期限切れで再ログイン (`UnauthorizedApiException` → `LoginForm` の自動表示で UX 緩和)
 - **WebGIS は WinForms 経由の token push**：bridge `auth_token` envelope で JWT を引き渡す最小実装。WebGIS 単体の login UI / refresh token は未対応 (Phase B)
-- **テナント分離なし**：`org_id` は claim/audit に記録されるが SQL WHERE には未強制。Phase B でベース層に組み込み
+- **テナント分離なし (feature 粒度)**: Phase F で layer 粒度の組織×レイヤ権限は実装済だが、feature_current の行レベル RLS は Phase G 送り。異組織の feature が地理的に重なる場合 tile に映りうる
+- **権限変更の即時反映なし**: tile cache TTL 24h で再ログインまで古い権限の tile が見える可能性。SSE での即時 invalidate は Phase F' 申し送り
 - **図形編集 UI なし**：API は `PATCH /api/features/{id}` で `geometry` を受け取れるが、WebGIS の Draw/Modify UI は未実装
-- **マイグレーションは手動適用**：Flyway 等のツールは未導入。`docker compose down -v` で再構築するのが現状の運用
+- **マイグレーションは手動適用**：Flyway 等のツールは未導入。`docker compose down -v` で再構築するのが現状の運用。PowerShell ループは culture sensitivity 回避のため `Sort-Object -CaseSensitive` 必須 ([db/migration/README.md](db/migration/README.md))
 - **WebView2 専用**：WebGIS は WebView2 ホスト下で動かす前提。ブラウザ単独起動も dev では動くが、bridge 通信は機能しない
 
 ## トラブルシュート
