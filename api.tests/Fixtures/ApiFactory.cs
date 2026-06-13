@@ -30,8 +30,15 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // api/Program.cs は環境変数 AGRI_GIS_DB を最優先するため、ここで差し込む
-        Environment.SetEnvironmentVariable("AGRI_GIS_DB", _connectionString);
+        // api/Program.cs は環境変数 AGRI_GIS_DB を最優先するため、ここで差し込む。
+        // LGP106: 各 ApiFactory が独立した NpgsqlDataSource (既定 pool 上限 100) を持つため、
+        //   1 テストランで多数の ApiFactory を生成すると Postgres の max_connections (既定 100) を
+        //   超えて "53300: too many clients already" になる。テスト用 data source の pool 上限を
+        //   小さく絞り、総接続数を抑える (本番接続文字列には影響しない)。
+        var testConn = _connectionString.Contains("Maximum Pool Size", StringComparison.OrdinalIgnoreCase)
+            ? _connectionString
+            : _connectionString.TrimEnd(';') + ";Maximum Pool Size=8";
+        Environment.SetEnvironmentVariable("AGRI_GIS_DB", testConn);
         // WA2 A201: JwtService が起動時に AGRI_GIS_JWT_SECRET を要求するため固定値を渡す。
         Environment.SetEnvironmentVariable("AGRI_GIS_JWT_SECRET", TestJwtSecret);
         // WA3 A207: InitialAdminBootstrap をテストではスキップ。seed は fixture 側で行う。

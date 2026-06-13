@@ -27,22 +27,25 @@ public static class AdminLayerGroupsEndpoints
             await using var conn = await db.OpenConnectionAsync();
             await using var tx = await conn.BeginTransactionAsync();
 
+            // LGP103: parent は自 org の group のみ許可 (他 org の group を親にできない → 404)
             if (req.ParentGroupId is int parentId)
             {
-                await EnsureGroupExistsAsync(conn, tx, parentId);
+                await EnsureGroupExistsAsync(conn, tx, parentId, user.OrgId);
             }
 
             LayerGroupDto dto;
             string afterDoc;
+            // LGP103: org_id = actor.OrgId を強制 (body で org 指定はさせない)
             await using (var cmd = new NpgsqlCommand(@"
-                INSERT INTO layer_group (group_name, parent_group_id, sort_order)
-                VALUES (@n, @p, @s)
+                INSERT INTO layer_group (group_name, parent_group_id, sort_order, org_id)
+                VALUES (@n, @p, @s, @org)
                 RETURNING group_id, parent_group_id, group_name, sort_order,
                           to_jsonb(layer_group.*)::text", conn, tx))
             {
                 cmd.Parameters.AddWithValue("n", req.GroupName.Trim());
                 cmd.Parameters.AddWithValue("p", (object?)req.ParentGroupId ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("s", req.SortOrder ?? 0);
+                cmd.Parameters.AddWithValue("org", user.OrgId);
                 await using var r = await cmd.ExecuteReaderAsync();
                 if (!await r.ReadAsync())
                 {
@@ -129,34 +132,40 @@ public static class AdminLayerGroupsEndpoints
             await using var tx = await conn.BeginTransactionAsync();
 
             // before doc 取得 + 行ロック (同一グループへの並行 PATCH を直列化)
+            // LGP103: 自 org の group のみ対象 (他 org の group は 0 件 = 404 で越権を遮断)
             string beforeDoc;
             await using (var cur = new NpgsqlCommand(
-                "SELECT to_jsonb(g.*)::text FROM layer_group g WHERE group_id = @id FOR UPDATE", conn, tx))
+                "SELECT to_jsonb(g.*)::text FROM layer_group g WHERE group_id = @id AND org_id = @org FOR UPDATE", conn, tx))
             {
                 cur.Parameters.AddWithValue("id", id);
+                cur.Parameters.AddWithValue("org", user.OrgId);
                 beforeDoc = (string?)await cur.ExecuteScalarAsync()
                     ?? throw new NotFoundException($"layer group not found: {id}");
             }
 
             if (parentProvided && parentGroupId is int newParent)
             {
-                await EnsureGroupExistsAsync(conn, tx, newParent);
+                // LGP103: 新 parent も自 org の group であることを保証 (他 org parent → 404)
+                await EnsureGroupExistsAsync(conn, tx, newParent, user.OrgId);
 
                 // 循環検証: 新 parent の祖先チェーンを WITH RECURSIVE で走査し、
                 // 自分自身 (newParent == id を含む) が現れたら 422 (PHASE_LG_PLAN.md リスク R6)。
+                // LGP103: chain も自 org 内に限定 (parent も同 org が保証済なので org フィルタを付ける)。
                 await using var cyc = new NpgsqlCommand(@"
                     WITH RECURSIVE chain AS (
                         SELECT group_id, parent_group_id
                           FROM layer_group
-                         WHERE group_id = @newParent
+                         WHERE group_id = @newParent AND org_id = @org
                         UNION ALL
                         SELECT g.group_id, g.parent_group_id
                           FROM layer_group g
                           JOIN chain c ON g.group_id = c.parent_group_id
+                         WHERE g.org_id = @org
                     )
                     SELECT 1 FROM chain WHERE group_id = @id LIMIT 1", conn, tx);
                 cyc.Parameters.AddWithValue("newParent", newParent);
                 cyc.Parameters.AddWithValue("id", id);
+                cyc.Parameters.AddWithValue("org", user.OrgId);
                 if (await cyc.ExecuteScalarAsync() is not null)
                 {
                     throw new ValidationException(new[]
@@ -175,11 +184,12 @@ public static class AdminLayerGroupsEndpoints
                        parent_group_id = CASE WHEN @setParent THEN @p::int ELSE parent_group_id END,
                        sort_order      = COALESCE(@s, sort_order),
                        updated_at      = now()
-                 WHERE group_id = @id
+                 WHERE group_id = @id AND org_id = @org
              RETURNING group_id, parent_group_id, group_name, sort_order,
                        to_jsonb(layer_group.*)::text", conn, tx))
             {
                 cmd.Parameters.AddWithValue("id", id);
+                cmd.Parameters.AddWithValue("org", user.OrgId);
                 cmd.Parameters.AddWithValue("n", (object?)groupName?.Trim() ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("setParent", parentProvided);
                 cmd.Parameters.AddWithValue("p", (object?)parentGroupId ?? DBNull.Value);
@@ -210,19 +220,22 @@ public static class AdminLayerGroupsEndpoints
             await using var conn = await db.OpenConnectionAsync();
             await using var tx = await conn.BeginTransactionAsync();
 
+            // LGP103: 自 org の group のみ削除可 (他 org は 0 件 = 404)
             string beforeDoc;
             await using (var cur = new NpgsqlCommand(
-                "SELECT to_jsonb(g.*)::text FROM layer_group g WHERE group_id = @id FOR UPDATE", conn, tx))
+                "SELECT to_jsonb(g.*)::text FROM layer_group g WHERE group_id = @id AND org_id = @org FOR UPDATE", conn, tx))
             {
                 cur.Parameters.AddWithValue("id", id);
+                cur.Parameters.AddWithValue("org", user.OrgId);
                 beforeDoc = (string?)await cur.ExecuteScalarAsync()
                     ?? throw new NotFoundException($"layer group not found: {id}");
             }
 
             await using (var del = new NpgsqlCommand(
-                "DELETE FROM layer_group WHERE group_id = @id", conn, tx))
+                "DELETE FROM layer_group WHERE group_id = @id AND org_id = @org", conn, tx))
             {
                 del.Parameters.AddWithValue("id", id);
+                del.Parameters.AddWithValue("org", user.OrgId);
                 await del.ExecuteNonQueryAsync();
             }
 
@@ -234,50 +247,77 @@ public static class AdminLayerGroupsEndpoints
             return Results.NoContent();
         });
 
-        // LG104: PUT /api/admin/layers/{layerId}/group
+        // LG104 / LGP104: PUT /api/admin/layers/{layerId}/group
         // デフォルトツリーでのレイヤ配置。groupId = null でルート直下。
+        // LGP104: layers.group_id 直更新を廃止し、layer_group_member (org_id, layer_id) を upsert する。
+        //   - layer は active かつ自 org が閲覧可 (org_layer_permission.can_view) であること。
+        //     不存在/閲覧不可 → 404 (admin であっても自 org のツリーのみ管理する)
+        //   - groupId は自 org の group のみ許可 (他 org の group → 404)
         group.MapPut("/layers/{layerId:int}/group",
             async (int layerId, AssignLayerGroupRequestDto req, HttpContext ctx, ICurrentUser user, NpgsqlDataSource db) =>
         {
+            var orgId = user.OrgId;
+
             await using var conn = await db.OpenConnectionAsync();
             await using var tx = await conn.BeginTransactionAsync();
 
-            // before doc (active 行のみ対象): layer 不存在は 404
-            string beforeDoc;
+            // layer が active であること (不存在 → 404)。閲覧可否は org_layer_permission で判定。
             await using (var cur = new NpgsqlCommand(@"
-                SELECT jsonb_build_object('layer_id', layer_id, 'group_id', group_id, 'sort_order', sort_order)::text
-                  FROM layers
-                 WHERE layer_id = @id AND valid_to = '9999-12-31'::date
-                   FOR UPDATE", conn, tx))
+                SELECT 1 FROM layers
+                 WHERE layer_id = @id AND valid_to = '9999-12-31'::date", conn, tx))
             {
                 cur.Parameters.AddWithValue("id", layerId);
-                beforeDoc = (string?)await cur.ExecuteScalarAsync()
-                    ?? throw new NotFoundException($"layer not found: {layerId}");
+                if (await cur.ExecuteScalarAsync() is null)
+                    throw new NotFoundException($"layer not found: {layerId}");
+            }
+
+            // 自 org が当該 layer を閲覧可であること (can_view=true)。閲覧不可 → 404。
+            await using (var perm = new NpgsqlCommand(@"
+                SELECT 1 FROM org_layer_permission
+                 WHERE org_id = @org AND layer_id = @id AND can_view = true", conn, tx))
+            {
+                perm.Parameters.AddWithValue("org", orgId);
+                perm.Parameters.AddWithValue("id", layerId);
+                if (await perm.ExecuteScalarAsync() is null)
+                    throw new NotFoundException($"layer not found: {layerId}");
             }
 
             if (req.GroupId is int groupId)
             {
-                await EnsureGroupExistsAsync(conn, tx, groupId);
+                // LGP104: 自 org の group のみ配置先に許可 (他 org の group → 404)
+                await EnsureGroupExistsAsync(conn, tx, groupId, orgId);
+            }
+
+            // before doc: 既存 member 行 (無ければ null)。audit の before/after に使う。
+            string? beforeDoc;
+            await using (var bc = new NpgsqlCommand(@"
+                SELECT jsonb_build_object('layer_id', layer_id, 'group_id', group_id, 'sort_order', sort_order)::text
+                  FROM layer_group_member
+                 WHERE org_id = @org AND layer_id = @id
+                   FOR UPDATE", conn, tx))
+            {
+                bc.Parameters.AddWithValue("org", orgId);
+                bc.Parameters.AddWithValue("id", layerId);
+                beforeDoc = (string?)await bc.ExecuteScalarAsync();
             }
 
             string afterDoc;
             await using (var cmd = new NpgsqlCommand(@"
-                UPDATE layers
-                   SET group_id   = @g,
-                       sort_order = @s,
-                       updated_at = now()
-                 WHERE layer_id = @id AND valid_to = '9999-12-31'::date
+                INSERT INTO layer_group_member (org_id, layer_id, group_id, sort_order)
+                VALUES (@org, @id, @g, @s)
+                ON CONFLICT (org_id, layer_id)
+                DO UPDATE SET group_id = EXCLUDED.group_id, sort_order = EXCLUDED.sort_order
              RETURNING jsonb_build_object('layer_id', layer_id, 'group_id', group_id, 'sort_order', sort_order)::text", conn, tx))
             {
+                cmd.Parameters.AddWithValue("org", orgId);
                 cmd.Parameters.AddWithValue("id", layerId);
                 cmd.Parameters.AddWithValue("g", (object?)req.GroupId ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("s", req.SortOrder);
-                afterDoc = (string?)await cmd.ExecuteScalarAsync()
-                    ?? throw new NotFoundException($"layer not found: {layerId}");
+                afterDoc = (string)(await cmd.ExecuteScalarAsync())!;
             }
 
             await InsertAuditAsync(conn, tx, user, ctx,
-                action: "layer_group_assign", targetTable: "layers",
+                action: "layer_group_assign", targetTable: "layer_group_member",
                 layerId: layerId, beforeDoc: beforeDoc, afterDoc: afterDoc);
 
             await tx.CommitAsync();
@@ -313,11 +353,14 @@ public static class AdminLayerGroupsEndpoints
         }
     }
 
-    private static async Task EnsureGroupExistsAsync(NpgsqlConnection conn, NpgsqlTransaction tx, int groupId)
+    // LGP103: group は自 org のもののみ「存在」とみなす (他 org の group は 404)。
+    private static async Task EnsureGroupExistsAsync(
+        NpgsqlConnection conn, NpgsqlTransaction tx, int groupId, int orgId)
     {
         await using var cmd = new NpgsqlCommand(
-            "SELECT 1 FROM layer_group WHERE group_id = @id", conn, tx);
+            "SELECT 1 FROM layer_group WHERE group_id = @id AND org_id = @org", conn, tx);
         cmd.Parameters.AddWithValue("id", groupId);
+        cmd.Parameters.AddWithValue("org", orgId);
         if (await cmd.ExecuteScalarAsync() is null)
         {
             throw new NotFoundException($"layer group not found: {groupId}");

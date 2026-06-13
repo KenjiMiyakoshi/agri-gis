@@ -141,11 +141,14 @@ public static class LayerEndpoints
                                l.schema_version, l.schema_json,
                                COALESCE(lsv.style_version, 1) AS style_version,
                                true AS can_edit,
-                               l.group_id, l.sort_order
+                               m.group_id, COALESCE(m.sort_order, 0)
                           FROM layers l
                           LEFT JOIN layer_style_version lsv
                             ON lsv.layer_id = l.layer_id
                            AND lsv.valid_to = '9999-12-31'::date
+                          LEFT JOIN layer_group_member m
+                            ON m.layer_id = l.layer_id
+                           AND m.org_id   = @userOrgId
                          WHERE l.valid_to = '9999-12-31'::date
                          ORDER BY l.layer_id";
                 }
@@ -156,7 +159,7 @@ public static class LayerEndpoints
                                l.schema_version, l.schema_json,
                                COALESCE(lsv.style_version, 1) AS style_version,
                                p.can_edit,
-                               l.group_id, l.sort_order
+                               m.group_id, COALESCE(m.sort_order, 0)
                           FROM layers l
                           INNER JOIN org_layer_permission p
                             ON p.layer_id = l.layer_id
@@ -165,6 +168,9 @@ public static class LayerEndpoints
                           LEFT JOIN layer_style_version lsv
                             ON lsv.layer_id = l.layer_id
                            AND lsv.valid_to = '9999-12-31'::date
+                          LEFT JOIN layer_group_member m
+                            ON m.layer_id = l.layer_id
+                           AND m.org_id   = @userOrgId
                          WHERE l.valid_to = '9999-12-31'::date
                          ORDER BY l.layer_id";
                 }
@@ -181,11 +187,14 @@ public static class LayerEndpoints
                                l.schema_version, l.schema_json,
                                COALESCE(lsv.style_version, 1) AS style_version,
                                true AS can_edit,
-                               l.group_id, l.sort_order
+                               m.group_id, COALESCE(m.sort_order, 0)
                           FROM layers l
                           LEFT JOIN layer_style_version lsv
                             ON lsv.layer_id = l.layer_id
                            AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                          LEFT JOIN layer_group_member m
+                            ON m.layer_id = l.layer_id
+                           AND m.org_id   = @userOrgId
                          WHERE l.valid_from <= @asof AND @asof < l.valid_to
                         UNION ALL
                         SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.owner_org_id, lh.is_shared, lh.created_at,
@@ -207,7 +216,7 @@ public static class LayerEndpoints
                                l.schema_version, l.schema_json,
                                COALESCE(lsv.style_version, 1) AS style_version,
                                p.can_edit,
-                               l.group_id, l.sort_order
+                               m.group_id, COALESCE(m.sort_order, 0)
                           FROM layers l
                           INNER JOIN org_layer_permission p
                             ON p.layer_id = l.layer_id
@@ -216,6 +225,9 @@ public static class LayerEndpoints
                           LEFT JOIN layer_style_version lsv
                             ON lsv.layer_id = l.layer_id
                            AND lsv.valid_from <= @asof AND @asof < lsv.valid_to
+                          LEFT JOIN layer_group_member m
+                            ON m.layer_id = l.layer_id
+                           AND m.org_id   = @userOrgId
                          WHERE l.valid_from <= @asof AND @asof < l.valid_to
                         UNION ALL
                         SELECT lh.layer_id, lh.layer_name, lh.layer_type, lh.owner_org_id, lh.is_shared, lh.created_at,
@@ -238,7 +250,8 @@ public static class LayerEndpoints
 
             await using var cmd = db.CreateCommand(sql);
             if (asOfDate is not null) cmd.Parameters.AddWithValue("asof", asOfDate.Value);
-            if (!isAdmin) cmd.Parameters.AddWithValue("userOrgId", user.OrgId);
+            // LGP105: @userOrgId は admin/非 admin 両方で layer_group_member の org フィルタに使うため常に必要
+            cmd.Parameters.AddWithValue("userOrgId", user.OrgId);
             await using var r = await cmd.ExecuteReaderAsync();
 
             var rows = new List<LayerDto>();
@@ -260,7 +273,9 @@ public static class LayerEndpoints
                     Schema: schema,
                     StyleVersion: r.GetInt32(8),
                     CanEdit: r.GetBoolean(9),
-                    // LG105 (Phase LG WLG1): index 10/11。SELECT 4 変種すべてで列を追加済み
+                    // LG105 / LGP105: index 10/11。SELECT 4 変種すべてで列を同期。
+                    // 現行行は layer_group_member 由来 (member 無し → group_id NULL / sort_order 0)、
+                    // asOf 履歴行は NULL::int / 0 リテラル。
                     GroupId: r.IsDBNull(10) ? null : r.GetInt32(10),
                     SortOrder: r.GetInt32(11)
                 ));

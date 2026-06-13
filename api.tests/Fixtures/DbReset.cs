@@ -16,6 +16,8 @@ public static class DbReset
                  RESTART IDENTITY CASCADE;
         DELETE FROM org_layer_permission;
         DELETE FROM layer_import_job;
+        -- LGP106: layer_group_member は layer_group / layers を FK 参照するため先に消す
+        DELETE FROM layer_group_member;
         DELETE FROM layers;
         ALTER SEQUENCE layers_layer_id_seq RESTART WITH 1;
         DELETE FROM layer_group;
@@ -75,6 +77,67 @@ public static class DbReset
             c.Parameters.AddWithValue("org", SeedUsers.OrgId);
             await c.ExecuteNonQueryAsync();
         }
+    }
+
+    // LGP106 (Phase LG' WLGP1): 2 つ目の組織 + その admin ユーザを作る。
+    // org スコープ検証 (org A の group が org B に出ない 等) に使う。
+    // 戻り値の (orgId, userId, loginId, displayName) を TokenForge.Issue に渡してトークンを発行する。
+    public sealed record SecondOrg(int OrgId, Guid UserId, string LoginId, string DisplayName);
+
+    public static async Task<SecondOrg> SeedSecondOrgAsync(
+        string connectionString, string code = "org-b", string adminLogin = "betty")
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        int orgId;
+        await using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO organizations (name, code)
+                 VALUES (@n, @c)
+            ON CONFLICT (code) WHERE deleted_at IS NULL
+            DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+            RETURNING id", conn))
+        {
+            cmd.Parameters.AddWithValue("n", $"組織 {code}");
+            cmd.Parameters.AddWithValue("c", code);
+            orgId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        }
+
+        var hasher = new AgriGis.Api.Auth.PasswordHasher();
+        var hash = hasher.Hash(SeedUsers.Password);
+        var displayName = $"{adminLogin} Admin";
+
+        Guid userId;
+        await using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO users (login_id, display_name, password_hash, org_id)
+                 VALUES (@l, @d, @h, @o)
+            ON CONFLICT (login_id) WHERE deleted_at IS NULL
+            DO UPDATE SET display_name = EXCLUDED.display_name,
+                          password_hash = EXCLUDED.password_hash,
+                          org_id = EXCLUDED.org_id,
+                          updated_at = now()
+            RETURNING user_id", conn))
+        {
+            cmd.Parameters.AddWithValue("l", adminLogin);
+            cmd.Parameters.AddWithValue("d", displayName);
+            cmd.Parameters.AddWithValue("h", hash);
+            cmd.Parameters.AddWithValue("o", orgId);
+            userId = (Guid)(await cmd.ExecuteScalarAsync())!;
+        }
+
+        await using (var del = new NpgsqlCommand("DELETE FROM user_roles WHERE user_id = @u", conn))
+        {
+            del.Parameters.AddWithValue("u", userId);
+            await del.ExecuteNonQueryAsync();
+        }
+        await using (var rcmd = new NpgsqlCommand(
+            "INSERT INTO user_roles (user_id, role) VALUES (@u, 'admin')", conn))
+        {
+            rcmd.Parameters.AddWithValue("u", userId);
+            await rcmd.ExecuteNonQueryAsync();
+        }
+
+        return new SecondOrg(orgId, userId, adminLogin, displayName);
     }
 
     // F (Phase F WF2): テスト用の権限上書きヘルパ。

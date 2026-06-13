@@ -19,6 +19,10 @@ public sealed class PostgisContainerFixture : IAsyncLifetime
             .WithDatabase("agri_gis")
             .WithUsername("agri_user")
             .WithPassword("agri_pass")
+            // LGP106: 1 テストランで多数の ApiFactory (各々が独立 NpgsqlDataSource を持つ) を
+            //   生成するため、PostgreSQL 既定の max_connections=100 では
+            //   "53300: too many clients already" に到達しうる。上限を引き上げて余裕を持たせる。
+            .WithCommand("-c", "max_connections=300")
             .Build();
 
         await _container.StartAsync();
