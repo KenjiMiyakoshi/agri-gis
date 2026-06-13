@@ -110,6 +110,90 @@ public sealed class MainFormControllerTreeTests
         Assert.Equal("賦課", ctrl.Tree.FindGroup("db:1")!.Name);
     }
 
+    // ---------------- LGP202: org スコープ済 API レスポンスからの defaultTree ----------------
+    // WLGP1 で API は ICurrentUser.OrgId でフィルタし、groupId/sortOrder を layer_group_member 経由で返す。
+    // Controller は org を知らず、返ってきた groups + layers をそのまま組むだけ (member 経路は透過)。
+    // 下記 2 テストは「同じ共有レイヤが org ごとに別グループへ返る」という member の効果を
+    // FakeApiClient のレスポンス差で再現し、Controller が org 別ツリーを正しく組めることを示す。
+
+    private static FakeApiClient ApiForOrg(
+        IReadOnlyList<LayerDto> layers, params LayerGroupDto[] groups)
+    {
+        var api = new FakeApiClient { GetLayersImpl = _ => layers };
+        api.LayerGroups.AddRange(groups);
+        return api;
+    }
+
+    [Fact]
+    public async Task Reload_OrgA_PlacesSharedLayerInChouka()
+    {
+        // org A: 共有レイヤ 100 を「賦課(db:1)」配下へ (member: group_id=1)
+        var api = ApiForOrg(
+            new[] { MakeLayer(100, groupId: 1, sortOrder: 0) },
+            new LayerGroupDto(1, null, "賦課", 0));
+        var ctrl = NewController(api);
+        await ctrl.ReloadAsync(null, CancellationToken.None);
+
+        Assert.Equal("db:1", ctrl.Tree.FindLayer(100)!.ParentKey);
+        Assert.Equal("賦課", ctrl.Tree.FindGroup("db:1")!.Name);
+    }
+
+    [Fact]
+    public async Task Reload_OrgB_PlacesSameSharedLayerInSokuryo()
+    {
+        // org B: 同じ共有レイヤ 100 を「測量(db:9)」配下へ (member: group_id=9)。
+        // org A とは完全独立ツリー (PLAN: 完全独立ツリー採用)
+        var api = ApiForOrg(
+            new[] { MakeLayer(100, groupId: 9, sortOrder: 0) },
+            new LayerGroupDto(9, null, "測量", 0));
+        var ctrl = NewController(api);
+        await ctrl.ReloadAsync(null, CancellationToken.None);
+
+        Assert.Equal("db:9", ctrl.Tree.FindLayer(100)!.ParentKey);
+        Assert.Equal("測量", ctrl.Tree.FindGroup("db:9")!.Name);
+    }
+
+    [Fact]
+    public async Task Reload_MemberAbsent_LayerFallsToRoot()
+    {
+        // member 行が無いレイヤ (org が閲覧可だが未配置) → API は groupId:null / sortOrder:0 を返す
+        // → ルート直下 (PLAN §1: member 無し = ルート末尾デフォルト)
+        var api = ApiForOrg(
+            new[] { MakeLayer(100, groupId: 1, sortOrder: 0), MakeLayer(200, groupId: null, sortOrder: 0) },
+            new LayerGroupDto(1, null, "賦課", 0));
+        var ctrl = NewController(api);
+        await ctrl.ReloadAsync(null, CancellationToken.None);
+
+        Assert.Equal("db:1", ctrl.Tree.FindLayer(100)!.ParentKey);
+        Assert.Null(ctrl.Tree.FindLayer(200)!.ParentKey);
+    }
+
+    [Fact]
+    public async Task MoveLayers_FromController_ViaTree_GathersAndPersists()
+    {
+        // Controller は Tree 経由で MoveLayers を呼べる (WLGP3 の UI 複数選択の前準備)。
+        var api = ApiForOrg(
+            new[]
+            {
+                MakeLayer(1, groupId: null, sortOrder: 0),
+                MakeLayer(2, groupId: null, sortOrder: 1),
+                MakeLayer(3, groupId: 1, sortOrder: 0),
+            },
+            new LayerGroupDto(1, null, "G", 0));
+        var ctrl = NewController(api);
+        await ctrl.ReloadAsync(null, CancellationToken.None);
+
+        ctrl.Tree.MoveLayers(new[] { 2, 1 }, "db:1", 0);
+        await ctrl.SaveTreeAsync(CancellationToken.None);
+
+        var ctrl2 = NewController(api);
+        await ctrl2.ReloadAsync(null, CancellationToken.None);
+        Assert.Equal("db:1", ctrl2.Tree.FindLayer(1)!.ParentKey);
+        Assert.Equal("db:1", ctrl2.Tree.FindLayer(2)!.ParentKey);
+        Assert.Equal(0, ctrl2.Tree.FindLayer(2)!.Order); // 入力順保持: 2 が先
+        Assert.Equal(1, ctrl2.Tree.FindLayer(1)!.Order);
+    }
+
     // ---------------- OrderedLayerIds = DFS ----------------
 
     [Fact]
