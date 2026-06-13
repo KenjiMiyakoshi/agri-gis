@@ -246,12 +246,25 @@ dotnet run
 
 詳細は [docs/PHASE_F_PRIME_INDEX.md](docs/PHASE_F_PRIME_INDEX.md) / [docs/PHASE_F_PRIME_COMPLETE.md](docs/PHASE_F_PRIME_COMPLETE.md) / [docs/sse-multiplex.md](docs/sse-multiplex.md) / [docs/tile-invalidation-on-perm.md](docs/tile-invalidation-on-perm.md) / [docs/manual-verification-phase-f-prime.md](docs/manual-verification-phase-f-prime.md)。
 
+## Phase LG: レイヤツリー UI (グループ + フラグ)
+
+フラットな CheckedListBox を**エクスプローラ風ツリー** (`LayerTreeView`) に転換。
+
+- **レイヤグループ (フォルダ概念)**: レイヤをグループにまとめ、`parent_group_id` 自己参照で多階層 OK。admin が管理する組織デフォルトグループは DB `layer_group` テーブル (CRUD は `/api/admin/layer-groups`、監査ログ記録)。ユーザ独自グループは `user_preference` に保存され本人のみに見える
+- **3 チェックボックス (表示 / 編集 / スナップ)**: owner-draw で各レイヤ行に 3 列を描画。グループ行の「表示」は 3 値 (ON / OFF / 混在 ■) で、チェックすると配下レイヤを一括 toggle。**編集 / スナップは状態保存のみで機能は未配線** (tooltip「将来機能」、`layer_flags_v1` に永続化、配線は Phase G 以降)
+- **drag 並べ替え**: ツリー内をマウスドラッグでレイヤ/グループの順序変更・グループ間移動。drop 位置は青線 (上/下挿入) / 青枠 (グループ内へ) indicator で表示。可視レイヤの z-order は「上から DFS 列挙した順」で WebGIS に届く (WebGIS 側は無変更)
+- **user_preference 永続化**: ツリー構造・展開状態は `layer_tree_v1`、フラグは `layer_flags_v1` に保存。再起動後に復元される。旧 `layer_order_v1` を持つユーザは初回に 1 回限り移行される
+- **組織スコープは Phase LG' 予定**: 現状 `layer_group` に `org_id` が無く、admin デフォルトツリーは全組織共通の単一ツリー (他組織にも見える)。組織独立ツリーへの修正は次サイクル Phase LG' で対応
+
+詳細は [docs/PHASE_LG_COMPLETE.md](docs/PHASE_LG_COMPLETE.md) / [docs/issues/PHASE_LG_PLAN.md](docs/issues/PHASE_LG_PLAN.md) / [docs/manual-verification-phase-lg.md](docs/manual-verification-phase-lg.md)。
+
 ## 既知の制約
 
 - **refresh token なし**：Phase A は access 8h のみ。期限切れで再ログイン (`UnauthorizedApiException` → `LoginForm` の自動表示で UX 緩和)
 - **WebGIS は WinForms 経由の token push**：bridge `auth_token` envelope で JWT を引き渡す最小実装。WebGIS 単体の login UI / refresh token は未対応 (Phase B)
 - **テナント分離なし (feature 粒度)**: Phase F で layer 粒度の組織×レイヤ権限は実装済だが、feature_current の行レベル RLS は Phase G 送り。異組織の feature が地理的に重なる場合 tile に映りうる
 - **SSE broker は in-memory**: 本番 1000+ user での運用は Phase F''/H で Redis 化検討
+- **レイヤグループに組織スコープなし**: Phase LG の `layer_group` に `org_id` 列が無く、admin デフォルトツリーが全組織共通で他組織にも見える (設計漏れ)。組織独立ツリーへの修正は Phase LG' 送り ([docs/issues/PHASE_LG_PRIME_PLAN.md](docs/issues/PHASE_LG_PRIME_PLAN.md))。ユーザ独自グループ (`usr:`) は本人のみで影響なし
 - **図形編集 UI なし**：API は `PATCH /api/features/{id}` で `geometry` を受け取れるが、WebGIS の Draw/Modify UI は未実装
 - **マイグレーションは手動適用**：Flyway 等のツールは未導入。`docker compose down -v` で再構築するのが現状の運用。PowerShell ループは culture sensitivity 回避のため `Sort-Object -CaseSensitive` 必須 ([db/migration/README.md](db/migration/README.md))
 - **WebView2 専用**：WebGIS は WebView2 ホスト下で動かす前提。ブラウザ単独起動も dev では動くが、bridge 通信は機能しない
