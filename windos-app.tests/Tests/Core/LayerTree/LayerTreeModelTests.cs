@@ -173,6 +173,147 @@ public sealed class LayerTreeModelTests
         Assert.Throws<KeyNotFoundException>(() => model.MoveLayer(999, null, 0));
     }
 
+    // ---------------- LGP201: MoveLayers (複数アトミック移動) ----------------
+
+    [Fact]
+    public void MoveLayers_PreservesInputOrder_NotTreeOrder()
+    {
+        var model = BuildNestedTree();
+        // 入力順 = 11, 10 (ツリー DFS では 10 が先)。入力順が保持されるべき
+        model.MoveLayers(new[] { 11, 10 }, null, 0);
+
+        Assert.Null(model.FindLayer(11)!.ParentKey);
+        Assert.Null(model.FindLayer(10)!.ParentKey);
+        Assert.Equal(0, model.FindLayer(11)!.Order);
+        Assert.Equal(1, model.FindLayer(10)!.Order);
+        // ルート先頭に 11, 10 が入力順で並ぶ
+        Assert.Equal(new[] { 11, 10, 20, 30 }, model.EnumerateAllLayerIds());
+    }
+
+    [Fact]
+    public void MoveLayers_AcrossGroups_GathersIntoTargetGroupFromStartOrder()
+    {
+        var model = BuildNestedTree();
+        // 30 (ルート) と 20 (db:2) を db:1 の index 1 から連番で集約
+        model.MoveLayers(new[] { 30, 20 }, "db:1", 1);
+
+        Assert.Equal("db:1", model.FindLayer(30)!.ParentKey);
+        Assert.Equal("db:1", model.FindLayer(20)!.ParentKey);
+        // db:1 の子: [10, 30, 20, db:2, 11]? db:2 は空に。挿入は除去後の子に対して index 1 起点
+        var db1 = model.FindGroup("db:1")!;
+        var childLayerIds = db1.Children.OfType<TreeLayerNode>().Select(l => l.LayerId).ToList();
+        Assert.Equal(new[] { 30, 20 }, childLayerIds.Where(id => id is 30 or 20).ToList());
+        Assert.Equal(1, model.FindLayer(30)!.Order);
+        Assert.Equal(2, model.FindLayer(20)!.Order);
+        Assert.Empty(model.FindGroup("db:2")!.Children); // 20 が抜けて空
+    }
+
+    [Fact]
+    public void MoveLayers_SkipsUnknownIds_ProcessesRest()
+    {
+        var model = BuildNestedTree();
+        model.MoveLayers(new[] { 10, 999, 30 }, "db:2", 0);
+
+        Assert.Equal("db:2", model.FindLayer(10)!.ParentKey);
+        Assert.Equal("db:2", model.FindLayer(30)!.ParentKey);
+        // 入力順 10, (999 無視), 30 が index 0 起点で挿入され、既存 20 は後ろへ押し出される
+        Assert.Equal(0, model.FindLayer(10)!.Order);
+        Assert.Equal(1, model.FindLayer(30)!.Order);
+        Assert.Equal(2, model.FindLayer(20)!.Order);
+    }
+
+    [Fact]
+    public void MoveLayers_AllUnknownIds_NoOp()
+    {
+        var model = BuildNestedTree();
+        var before = model.EnumerateAllLayerIds();
+
+        model.MoveLayers(new[] { 998, 999 }, null, 0);
+
+        Assert.Equal(before, model.EnumerateAllLayerIds());
+    }
+
+    [Fact]
+    public void MoveLayers_EmptyInput_NoOp()
+    {
+        var model = BuildNestedTree();
+        var before = model.EnumerateAllLayerIds();
+
+        model.MoveLayers(Array.Empty<int>(), "db:1", 0);
+
+        Assert.Equal(before, model.EnumerateAllLayerIds());
+    }
+
+    [Fact]
+    public void MoveLayers_DuplicateIds_FirstWins()
+    {
+        var model = BuildNestedTree();
+        model.MoveLayers(new[] { 30, 30 }, "db:1", 0);
+
+        var db1 = model.FindGroup("db:1")!;
+        // 30 は 1 度だけ挿入される
+        Assert.Single(db1.Children.OfType<TreeLayerNode>().Where(l => l.LayerId == 30));
+        Assert.Equal(0, model.FindLayer(30)!.Order);
+    }
+
+    [Fact]
+    public void MoveLayers_StartOrderBeyondEnd_ClampsToEnd()
+    {
+        var model = BuildNestedTree();
+        // ルートには db:1, layer30 の 2 ノード。除去後 startOrder=99 は末尾へ clamp
+        model.MoveLayers(new[] { 10, 11 }, null, 99);
+
+        Assert.Equal(new[] { 20, 30, 10, 11 }, model.EnumerateAllLayerIds());
+        Assert.Equal(2, model.FindLayer(10)!.Order);
+        Assert.Equal(3, model.FindLayer(11)!.Order);
+    }
+
+    [Fact]
+    public void MoveLayers_NegativeStartOrder_ClampsToZero()
+    {
+        var model = BuildNestedTree();
+        model.MoveLayers(new[] { 30 }, "db:1", -5);
+
+        Assert.Equal(0, model.FindLayer(30)!.Order);
+        Assert.Equal("db:1", model.FindLayer(30)!.ParentKey);
+    }
+
+    [Fact]
+    public void MoveLayers_UnknownParentKey_Throws()
+    {
+        var model = BuildNestedTree();
+        Assert.Throws<KeyNotFoundException>(() => model.MoveLayers(new[] { 10 }, "db:999", 0));
+    }
+
+    [Fact]
+    public void MoveLayer_SingleDelegation_MatchesMoveLayersBehavior()
+    {
+        var a = BuildNestedTree();
+        var b = BuildNestedTree();
+
+        a.MoveLayer(30, "db:2", 0);
+        b.MoveLayers(new[] { 30 }, "db:2", 0);
+
+        Assert.Equal(a.EnumerateAllLayerIds(), b.EnumerateAllLayerIds());
+        Assert.Equal(a.FindLayer(30)!.ParentKey, b.FindLayer(30)!.ParentKey);
+        Assert.Equal(a.FindLayer(30)!.Order, b.FindLayer(30)!.Order);
+    }
+
+    [Fact]
+    public void MoveLayers_SameParentReorder_ContiguousFromStartOrder()
+    {
+        var model = BuildNestedTree();
+        // db:1 内: [10, db:2, 11]。10 と 11 を index 0 起点で先頭へ寄せる
+        model.MoveLayers(new[] { 11, 10 }, "db:1", 0);
+
+        var db1 = model.FindGroup("db:1")!;
+        var ids = db1.Children.Select(c => c is TreeLayerNode l ? l.LayerId : -1).ToList();
+        // 11, 10 が先頭、db:2 (-1) が後ろ
+        Assert.Equal(new[] { 11, 10, -1 }, ids);
+        Assert.Equal(0, model.FindLayer(11)!.Order);
+        Assert.Equal(1, model.FindLayer(10)!.Order);
+    }
+
     // ---------------- RemoveGroup ----------------
 
     [Fact]

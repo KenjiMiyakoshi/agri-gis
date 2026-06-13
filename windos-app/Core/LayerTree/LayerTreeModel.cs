@@ -159,13 +159,53 @@ public sealed class LayerTreeModel
     // ---------------------------------------------------------------
 
     /// <summary>レイヤを parentKey (null=ルート) の order 位置へ移動する。</summary>
+    /// <remarks>
+    /// 単一移動は MoveLayers へ委譲する (移動ロジック重複排除)。ただし MoveLayers は
+    /// 「未知 id は無視」だが、単一 MoveLayer は従来通り未知 id で KeyNotFoundException を
+    /// 投げる契約 (UI の単一 D&D は存在保証を呼び出し側に要求してきた) を維持するため、
+    /// 存在検証だけ先に行う。
+    /// </remarks>
     public void MoveLayer(int layerId, string? parentKey, int order)
     {
-        var layer = FindLayer(layerId)
-            ?? throw new KeyNotFoundException($"layer not found: {layerId}");
+        if (FindLayer(layerId) is null)
+            throw new KeyNotFoundException($"layer not found: {layerId}");
+        MoveLayers(new[] { layerId }, parentKey, order);
+    }
+
+    /// <summary>
+    /// LGP201 (Phase LG' WLGP2): 複数レイヤをアトミックに parentKey (null=ルート) 配下へ移動する。
+    /// 元位置から全レイヤを除去 → parent 配下に startOrder から入力順で連番挿入する。
+    /// - 入力 layerIds の順序を保持して挿入する。
+    /// - 存在しない layerId は無視し、残りを処理する (全件 unknown でも例外にしない)。
+    /// - 重複 layerId は先勝ち (2 回目以降は無視)。
+    /// - parentKey が存在しないグループキーの場合は既存 MoveLayer 同様 KeyNotFoundException
+    ///   (ResolveParent の挙動に倣う。寛容にしたい Build/Merge とは別経路の明示操作のため厳格)。
+    ///
+    /// index ずれ処理: parent の現在の子数に対し startOrder を 0..count に正規化 (InsertAt の Clamp)。
+    /// 同一 parent 内移動でも、除去で後続 index が詰まった後の clamp 済み位置へ順次挿入するため、
+    /// 入力順がそのまま startOrder 起点の連続スロットに反映される (Order は常に 0..n-1 に正規化)。
+    /// </summary>
+    public void MoveLayers(IReadOnlyList<int> layerIds, string? parentKey, int startOrder)
+    {
         var parent = ResolveParent(parentKey);
-        Detach(layer);
-        InsertAt(parent, layer, order);
+
+        var seen = new HashSet<int>();
+        var targets = new List<TreeLayerNode>();
+        foreach (var id in layerIds)
+        {
+            if (!seen.Add(id)) continue; // 重複は先勝ち
+            if (FindLayer(id) is { } layer) targets.Add(layer); // 未知 id は無視
+        }
+        if (targets.Count == 0) return;
+
+        foreach (var layer in targets) Detach(layer);
+
+        // 除去後の parent 子数に対し startOrder を正規化し、そこから入力順で連続挿入する。
+        var insertAt = Math.Clamp(startOrder, 0, parent.ChildList.Count);
+        for (var i = 0; i < targets.Count; i++)
+        {
+            InsertAt(parent, targets[i], insertAt + i);
+        }
     }
 
     /// <summary>
