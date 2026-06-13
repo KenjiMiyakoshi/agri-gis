@@ -61,8 +61,120 @@ internal sealed class LayerTreeView : TreeView
     /// <summary>group 行の「表示」checkbox クリック (group key)。</summary>
     public event Action<string>? GroupVisibleToggled;
 
-    /// <summary>drag-and-drop によるノード移動確定。</summary>
+    /// <summary>drag-and-drop による単一ノード (group 含む) 移動確定。</summary>
     public event EventHandler<LayerTreeNodeMovedEventArgs>? NodeMoved;
+
+    /// <summary>
+    /// LGP302: 複数レイヤのまとめ D&D 移動確定。LayerIds は可視 DFS 順 (画面表示順)。
+    /// group ノードは対象外 (layer のみ抽出済み)。
+    /// </summary>
+    public event EventHandler<LayerTreeLayersMovedEventArgs>? LayersMoved;
+
+    // ---------------------------------------------------------------
+    // LGP301: 複数選択 (順序付き集合 + アンカー)
+    // ---------------------------------------------------------------
+    //
+    // native TreeView は単一選択 (SelectedNode) しか持てないため、複数選択を自前管理する。
+    // - _selectedNodes: 選択ノードを「追加された順」で保持 (List)。描画/復元の安定順に使う
+    // - _selectedSet: O(1) で「選択中か」を判定する HashSet (List と常に同期)
+    // - native SelectedNode はフォーカス枠 (キャレット) 表示用に併用維持する
+    // - _anchorNode: Shift 範囲選択の起点。単一選択 / Ctrl トグル追加で更新、Shift では固定
+
+    private readonly List<TreeNode> _selectedNodes = new();
+    private readonly HashSet<TreeNode> _selectedSet = new();
+    private TreeNode? _anchorNode;
+
+    /// <summary>現在の複数選択ノード (追加順、read only)。</summary>
+    public IReadOnlyList<TreeNode> SelectedNodes => _selectedNodes;
+
+    private void ClearMultiSelection()
+    {
+        _selectedNodes.Clear();
+        _selectedSet.Clear();
+    }
+
+    private void SetSingleSelection(TreeNode node)
+    {
+        ClearMultiSelection();
+        _selectedNodes.Add(node);
+        _selectedSet.Add(node);
+        _anchorNode = node;
+    }
+
+    private void ToggleSelection(TreeNode node)
+    {
+        if (_selectedSet.Remove(node))
+        {
+            _selectedNodes.Remove(node);
+            // 除去後はアンカーを残存選択の末尾へ寄せる (無ければ null)
+            if (ReferenceEquals(_anchorNode, node))
+                _anchorNode = _selectedNodes.Count > 0 ? _selectedNodes[^1] : null;
+        }
+        else
+        {
+            _selectedNodes.Add(node);
+            _selectedSet.Add(node);
+            _anchorNode = node;
+        }
+    }
+
+    // Shift 範囲選択: アンカーから clicked まで「可視 DFS 順」で連続選択する。
+    // 折りたたみグループの中のノードは可視列挙に現れないので自然に範囲対象外となる。
+    private void SelectRange(TreeNode anchor, TreeNode clicked)
+    {
+        var visible = EnumerateVisibleNodesDfs().ToList();
+        var range = LayerTreeSelectionMath.ComputeShiftRange(visible, anchor, clicked);
+        ClearMultiSelection();
+        foreach (var n in range)
+        {
+            _selectedNodes.Add(n);
+            _selectedSet.Add(n);
+        }
+        // アンカーは固定 (Shift では更新しない)
+    }
+
+    /// <summary>
+    /// LGP301: 可視 DFS 順 (展開グループのみ降りる、native の NextVisibleNode 順と一致) で
+    /// ノードを列挙する。Shift 範囲選択と、まとめ D&D の挿入順算出に使う。
+    /// </summary>
+    public IEnumerable<TreeNode> EnumerateVisibleNodesDfs()
+    {
+        for (var n = Nodes.Count > 0 ? Nodes[0] : null; n is not null; n = n.NextVisibleNode)
+        {
+            yield return n;
+        }
+    }
+
+    /// <summary>
+    /// LGP302: 再構築後に layerId 集合で複数選択を復元する (移動したレイヤ群を選択維持)。
+    /// native SelectedNode は focus 用に集合の先頭 (可視 DFS 順) へ合わせる。
+    /// </summary>
+    public void RestoreSelectionByLayerIds(IReadOnlyCollection<int> layerIds)
+    {
+        ClearMultiSelection();
+        _anchorNode = null;
+        if (layerIds.Count == 0)
+        {
+            SelectedNode = null;
+            Invalidate();
+            return;
+        }
+
+        var wanted = new HashSet<int>(layerIds);
+        TreeNode? first = null;
+        foreach (var n in EnumerateVisibleNodesDfs())
+        {
+            if (n.Tag is TreeLayerNode layer && wanted.Contains(layer.LayerId))
+            {
+                _selectedNodes.Add(n);
+                _selectedSet.Add(n);
+                first ??= n;
+            }
+        }
+        _anchorNode = _selectedNodes.Count > 0 ? _selectedNodes[^1] : null;
+        SelectedNode = first; // focus 枠用
+        Invalidate();
+    }
 
     // ---------------------------------------------------------------
     // owner-draw (LG301)
@@ -96,7 +208,11 @@ internal sealed class LayerTreeView : TreeView
         var g = e.Graphics;
         var rowTop = e.Node.Bounds.Top;
         var rowHeight = e.Node.Bounds.Height;
-        var selected = (e.State & TreeNodeStates.Selected) != 0;
+        // LGP301: 複数選択集合に含まれるノードは全て選択ハイライト。集合が空の場合のみ
+        // native の Selected 状態 (選択復元前の初期描画等) にフォールバックする。
+        var selected = _selectedSet.Count > 0
+            ? _selectedSet.Contains(e.Node)
+            : (e.State & TreeNodeStates.Selected) != 0;
         var isGroup = e.Node.Tag is TreeGroupNode;
         var font = isGroup ? BoldFont : Font;
 
@@ -312,13 +428,37 @@ internal sealed class LayerTreeView : TreeView
         _dragCandidate = null;
         _dragStarted = false;
         if (e.Button != MouseButtons.Left) return;
-        // 展開 glyph (PlusMinus) のクリックは drag 対象にしない
+        // 展開 glyph (PlusMinus) のクリックは drag / 選択対象にしない
         if (HitTest(e.Location).Location == TreeViewHitTestLocations.PlusMinus) return;
         var node = NodeFromRow(e.Location);
         if (node is null) return;
-        SelectedNode = node;
+
+        // LGP301: 修飾キーで複数選択を更新する。checkbox 列ヒットは WndProc が
+        // base.WndProc を呼ばず横取りするため、ここには到達しない (選択と独立)。
+        ApplySelectionOnMouseDown(node);
+        SelectedNode = node; // focus 枠 (キャレット) 用
+        Invalidate();
+
         _dragCandidate = node;
         _dragStartPoint = e.Location;
+    }
+
+    private void ApplySelectionOnMouseDown(TreeNode node)
+    {
+        var ctrl = (ModifierKeys & Keys.Control) != 0;
+        var shift = (ModifierKeys & Keys.Shift) != 0;
+        if (shift && _anchorNode is not null)
+        {
+            SelectRange(_anchorNode, node);
+        }
+        else if (ctrl)
+        {
+            ToggleSelection(node);
+        }
+        else
+        {
+            SetSingleSelection(node);
+        }
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -332,11 +472,29 @@ internal sealed class LayerTreeView : TreeView
         if (dx < SystemInformation.DragSize.Width && dy < SystemInformation.DragSize.Height) return;
 
         _dragStarted = true;
-        var node = _dragCandidate;
-        ShowGhost(node);
+        var grabbed = _dragCandidate;
+
+        // LGP302: 掴んだノードが選択集合に含まれなければ単一リセット (掴んだノードのみ選択)。
+        if (!_selectedSet.Contains(grabbed))
+        {
+            SetSingleSelection(grabbed);
+            SelectedNode = grabbed;
+            Invalidate();
+        }
+
+        var payload = BuildDragPayload(grabbed);
+        if (payload is null)
+        {
+            // 対象 layer が 0 件 (group のみ複数選択など) → drag キャンセル
+            _dragCandidate = null;
+            _dragStarted = false;
+            return;
+        }
+
+        ShowGhost(payload, grabbed);
         try
         {
-            DoDragDrop(node, DragDropEffects.Move);
+            DoDragDrop(payload, DragDropEffects.Move);
         }
         finally
         {
@@ -345,6 +503,27 @@ internal sealed class LayerTreeView : TreeView
             _dragCandidate = null;
             _dragStarted = false;
         }
+    }
+
+    // 掴んだノードから drag payload を決める。
+    // - 選択集合に layer ノードが 1 つ以上あれば layer のみ抽出した「まとめ移動」 (group は除外)
+    // - 集合が単一の group ノードのみなら従来の単独 group 移動
+    // - layer も group も無ければ null (drag キャンセル)
+    private LayerDragPayload? BuildDragPayload(TreeNode grabbed)
+    {
+        // 可視 DFS 順 (= 画面表示順) で選択中の layer ノードを並べる。
+        // PLAN の「選択時の相対順を保ったまま」を画面表示順と解釈する (連続挿入が直感的)。
+        var layerIds = new List<int>();
+        foreach (var n in EnumerateVisibleNodesDfs())
+        {
+            if (_selectedSet.Contains(n) && n.Tag is TreeLayerNode layer)
+                layerIds.Add(layer.LayerId);
+        }
+        if (layerIds.Count > 0) return LayerDragPayload.ForLayers(this, layerIds);
+
+        // layer が一つも無い → 単独 group 移動 (掴んだノードが group のときのみ)
+        if (grabbed.Tag is TreeGroupNode g) return LayerDragPayload.ForGroup(this, g.Key, grabbed);
+        return null;
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -358,7 +537,7 @@ internal sealed class LayerTreeView : TreeView
     protected override void OnDragOver(DragEventArgs e)
     {
         base.OnDragOver(e);
-        if (e.Data?.GetData(typeof(TreeNode)) is not TreeNode src || src.TreeView != this)
+        if (GetDragPayload(e) is not { } payload)
         {
             e.Effect = DragDropEffects.None;
             ClearDropIndicator();
@@ -375,8 +554,10 @@ internal sealed class LayerTreeView : TreeView
             return;
         }
 
-        // group を自分自身 / 自分の子孫へ drop → 禁止
-        if (target == src || (src.Tag is TreeGroupNode && IsAncestorNode(src, target)))
+        // 単独 group 移動のみ: 自分自身 / 自分の子孫へ drop → 禁止。
+        // まとめ layer 移動は layer 限定なのでこの制約は無関係 (group は対象外)。
+        if (payload.GroupNode is { } srcGroup &&
+            (target == srcGroup || IsAncestorNode(srcGroup, target)))
         {
             e.Effect = DragDropEffects.None;
             ClearDropIndicator();
@@ -430,50 +611,70 @@ internal sealed class LayerTreeView : TreeView
         var pos = _dropPosition;
         ClearDropIndicator();
 
-        if (e.Data?.GetData(typeof(TreeNode)) is not TreeNode src || src.TreeView != this) return;
+        if (GetDragPayload(e) is not { } payload) return;
 
+        // drop 先の parentKey + 挿入先 parent ノード (null=ルート) + UI 上のベース挿入 index
+        // (= 移動元を抜く前の挿入位置) を算出する。
+        // dropParentNode は「挿入される親 TreeNode」: Above/Below は target の親、Into は target 自身、
+        // RootEnd は null。targetSiblings は対応する子コレクション。
         string? parentKey;
-        int index;
+        TreeNode? dropParentNode;
+        TreeNodeCollection targetSiblings;
+        int baseIndex;
+        var insertBetween = false; // Above/Below のみ true (同一親内の src 抽出補正対象)
         switch (pos)
         {
             case LayerTreeDropPosition.Above when targetNode is not null:
                 parentKey = KeyOf(targetNode.Parent);
-                index = targetNode.Index;
-                AdjustForSameParentMove(src, targetNode.Parent, ref index);
+                dropParentNode = targetNode.Parent;
+                targetSiblings = targetNode.Parent?.Nodes ?? Nodes;
+                baseIndex = targetNode.Index;
+                insertBetween = true;
                 break;
             case LayerTreeDropPosition.Below when targetNode is not null:
                 parentKey = KeyOf(targetNode.Parent);
-                index = targetNode.Index + 1;
-                AdjustForSameParentMove(src, targetNode.Parent, ref index);
+                dropParentNode = targetNode.Parent;
+                targetSiblings = targetNode.Parent?.Nodes ?? Nodes;
+                baseIndex = targetNode.Index + 1;
+                insertBetween = true;
                 break;
             case LayerTreeDropPosition.Into when targetNode?.Tag is TreeGroupNode group:
                 parentKey = group.Key;
-                index = targetNode.Nodes.Count; // 末尾 (model 側で detach 後に clamp される)
+                dropParentNode = targetNode;
+                targetSiblings = targetNode.Nodes;
+                baseIndex = targetNode.Nodes.Count; // 末尾
                 break;
             case LayerTreeDropPosition.RootEnd:
                 parentKey = null;
-                index = Nodes.Count;
+                dropParentNode = null;
+                targetSiblings = Nodes;
+                baseIndex = Nodes.Count;
                 break;
             default:
                 return;
         }
 
-        LayerTreeNodeMovedEventArgs? args = src.Tag switch
+        if (payload.GroupNode is { } srcGroup)
         {
-            TreeLayerNode layer => LayerTreeNodeMovedEventArgs.ForLayer(layer.LayerId, parentKey, index),
-            TreeGroupNode g => LayerTreeNodeMovedEventArgs.ForGroup(g.Key, parentKey, index),
-            _ => null,
-        };
-        if (args is not null)
-        {
-            NodeMoved?.Invoke(this, args);
+            // 単独 group 移動 (従来経路): Above/Below で同一親内なら src 抽出ぶん index を 1 詰める。
+            var index = baseIndex;
+            if (insertBetween && srcGroup.Parent == dropParentNode && srcGroup.Index < index)
+            {
+                index--;
+            }
+            NodeMoved?.Invoke(this,
+                LayerTreeNodeMovedEventArgs.ForGroup(payload.GroupKey!, parentKey, index));
+            return;
         }
-    }
 
-    // 同一親内の移動で src を抜くと src 以降の index が 1 つずれるため調整する。
-    private static void AdjustForSameParentMove(TreeNode src, TreeNode? targetParent, ref int index)
-    {
-        if (src.Parent == targetParent && src.Index < index) index--;
+        // まとめ layer 移動: ベース index を「移動元 layer 抽出後」の startOrder に変換する。
+        // Core MoveLayers は targets を detach 後に startOrder を clamp して連続挿入するため、
+        // 同一 parent 内に居て baseIndex より前にある移動対象の数だけ前詰めする。
+        // TreeNodeCollection は IReadOnlyList<TreeNode> 非実装なので一旦 list 化して渡す。
+        var siblingList = targetSiblings.Cast<TreeNode>().ToList();
+        var startOrder = LayerTreeSelectionMath.ComputeMultiStartOrder(siblingList, baseIndex, _selectedSet);
+        LayersMoved?.Invoke(this,
+            new LayerTreeLayersMovedEventArgs(payload.LayerIds!, parentKey, startOrder));
     }
 
     private static string? KeyOf(TreeNode? node)
@@ -572,10 +773,14 @@ internal sealed class LayerTreeView : TreeView
     // drag ghost (F'304 の DragGhostForm を移設)
     // ---------------------------------------------------------------
 
-    private void ShowGhost(TreeNode node)
+    private void ShowGhost(LayerDragPayload payload, TreeNode grabbed)
     {
         _dragGhost ??= new DragGhostForm();
-        _dragGhost.TextLabel.Text = $"↕  {node.Text}";
+        // LGP302: layer N>1 件なら「N 件のレイヤ」、1 件 / group なら従来どおりノード名。
+        var label = payload.LayerIds is { Count: > 1 } ids
+            ? $"{ids.Count} 件のレイヤ"
+            : grabbed.Text;
+        _dragGhost.TextLabel.Text = $"↕  {label}";
         _dragGhost.Size = new Size(
             _dragGhost.TextLabel.PreferredWidth + 4,
             _dragGhost.TextLabel.PreferredHeight + 4);
@@ -583,7 +788,42 @@ internal sealed class LayerTreeView : TreeView
         _dragGhost.Show();
     }
 
+    // drag データから自分自身が作った payload を取り出す (他コントロール由来は null)。
+    private LayerDragPayload? GetDragPayload(DragEventArgs e)
+    {
+        if (e.Data?.GetData(typeof(LayerDragPayload)) is LayerDragPayload p && p.Owner == this)
+            return p;
+        return null;
+    }
+
     private void HideGhost() => _dragGhost?.Hide();
+
+    // drag-and-drop の搬送オブジェクト。
+    // - LayerIds 非 null = まとめ layer 移動 (可視 DFS 順)。GroupKey/GroupNode は null
+    // - GroupKey 非 null = 単独 group 移動。LayerIds は null
+    // Owner で自コントロール由来の drag だけを受け付ける (旧 src.TreeView 比較の置換)。
+    private sealed class LayerDragPayload
+    {
+        private LayerDragPayload(
+            LayerTreeView owner, IReadOnlyList<int>? layerIds, string? groupKey, TreeNode? groupNode)
+        {
+            Owner = owner;
+            LayerIds = layerIds;
+            GroupKey = groupKey;
+            GroupNode = groupNode;
+        }
+
+        public LayerTreeView Owner { get; }
+        public IReadOnlyList<int>? LayerIds { get; }
+        public string? GroupKey { get; }
+        public TreeNode? GroupNode { get; }
+
+        public static LayerDragPayload ForLayers(LayerTreeView owner, IReadOnlyList<int> layerIds)
+            => new(owner, layerIds, null, null);
+
+        public static LayerDragPayload ForGroup(LayerTreeView owner, string groupKey, TreeNode node)
+            => new(owner, null, groupKey, node);
+    }
 
     // 半透明ゴースト Form (borderless / TopMost / non-activating)
     private sealed class DragGhostForm : Form
@@ -678,6 +918,26 @@ internal sealed class LayerTreeNodeMovedEventArgs : EventArgs
     public string? GroupKey { get; }
     public string? TargetParentKey { get; }
     public int TargetIndex { get; }
+}
+
+/// <summary>
+/// LGP302: まとめ layer D&D の移動確定イベント引数。
+/// LayerIds は可視 DFS 順 (画面表示順)。TargetParentKey=null はルート直下。
+/// StartOrder は移動元 layer を抜いた後の挿入起点 (Core MoveLayers の startOrder にそのまま渡す)。
+/// </summary>
+internal sealed class LayerTreeLayersMovedEventArgs : EventArgs
+{
+    public LayerTreeLayersMovedEventArgs(
+        IReadOnlyList<int> layerIds, string? targetParentKey, int startOrder)
+    {
+        LayerIds = layerIds;
+        TargetParentKey = targetParentKey;
+        StartOrder = startOrder;
+    }
+
+    public IReadOnlyList<int> LayerIds { get; }
+    public string? TargetParentKey { get; }
+    public int StartOrder { get; }
 }
 
 // LG301: ツリー上部の列ヘッダ ("表示 編集 スナップ")。

@@ -84,6 +84,15 @@ public sealed class MainFormController
     public void MoveLayer(int layerId, string? parentKey, int order)
         => _tree.MoveLayer(layerId, parentKey, order);
 
+    /// <summary>
+    /// LGP302 (Phase LG' WLGP3): 複数レイヤを parentKey (null=ルート) 配下の startOrder 位置へ
+    /// まとめて移動する。layerIds の順序を保持して連続挿入する (Core MoveLayers のアトミック実装)。
+    /// 単一 D&D / まとめ D&D の両方をこのラッパに寄せて UI から Tree を直接触らせない。
+    /// 未知 id は無視、重複は先勝ち、全件不在なら無操作 (Core MoveLayers の寛容契約)。
+    /// </summary>
+    public void MoveLayersTo(IReadOnlyList<int> layerIds, string? parentKey, int startOrder)
+        => _tree.MoveLayers(layerIds, parentKey, startOrder);
+
     /// <summary>グループ移動。自分自身/子孫への移動は InvalidOperationException。</summary>
     public void MoveGroup(string key, string? parentKey, int order)
         => _tree.MoveGroup(key, parentKey, order);

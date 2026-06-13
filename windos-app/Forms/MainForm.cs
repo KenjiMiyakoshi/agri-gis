@@ -39,6 +39,7 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         layerTree.LayerSnapToggled += layerId => OnLayerFlagToggled(layerId, isEdit: false);
         layerTree.GroupVisibleToggled += OnGroupVisibleToggled;
         layerTree.NodeMoved += OnLayerTreeNodeMoved;
+        layerTree.LayersMoved += OnLayerTreeLayersMoved;
         layerTree.AfterExpand += OnLayerTreeExpandedChanged;
         layerTree.AfterCollapse += OnLayerTreeExpandedChanged;
         layerTree.NodeMouseClick += (_, e) =>
@@ -302,13 +303,15 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
 
     // ====== LG303: drag-and-drop 移動 ======
 
+    // 単一ノード移動 (group は MoveGroup、layer は MoveLayersTo 単一に寄せる)。
     private void OnLayerTreeNodeMoved(object? sender, LayerTreeNodeMovedEventArgs e)
     {
         try
         {
             if (e.LayerId is int layerId)
             {
-                _controller.MoveLayer(layerId, e.TargetParentKey, e.TargetIndex);
+                // 単一 layer もまとめ移動ラッパ経由に統一 (Tree を直接触らせない設計に合わせる)
+                _controller.MoveLayersTo(new[] { layerId }, e.TargetParentKey, e.TargetIndex);
             }
             else if (e.GroupKey is { } groupKey)
             {
@@ -328,6 +331,28 @@ public partial class MainForm : Form, IFeatureSaveCoordinator
         SendLayerOrderChange();
         _ = SaveTreeSafelyAsync();
         SetStatus("Layer tree updated");
+    }
+
+    // LGP302: 複数 layer のまとめ移動。Core MoveLayers で原子的に並べ替え、
+    // 再構築後に移動した layer 群の選択を復元する。
+    private void OnLayerTreeLayersMoved(object? sender, LayerTreeLayersMovedEventArgs e)
+    {
+        if (e.LayerIds.Count == 0) return;
+        try
+        {
+            _controller.MoveLayersTo(e.LayerIds, e.TargetParentKey, e.StartOrder);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException)
+        {
+            SetStatus($"move failed: {ex.Message}");
+            return;
+        }
+        RebuildLayerTree();
+        // 移動した layer 群を選択状態のまま維持する (再構築で TreeNode が作り直されるため復元)
+        layerTree.RestoreSelectionByLayerIds(e.LayerIds);
+        SendLayerOrderChange();
+        _ = SaveTreeSafelyAsync();
+        SetStatus($"{e.LayerIds.Count} layers moved");
     }
 
     // ====== LG303: 展開状態の永続化 ======
